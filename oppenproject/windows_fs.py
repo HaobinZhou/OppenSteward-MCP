@@ -27,7 +27,7 @@ def _open(path: Path, *, directory: bool, write=False):
         win32con.FILE_SHARE_READ if not write else 0,
         None,
         win32con.OPEN_ALWAYS if write else win32con.OPEN_EXISTING,
-        win32con.FILE_FLAG_OPEN_REPARSE_POINT | win32con.FILE_FLAG_BACKUP_SEMANTICS,
+        win32file.FILE_FLAG_OPEN_REPARSE_POINT | win32con.FILE_FLAG_BACKUP_SEMANTICS,
         None,
     )
     try:
