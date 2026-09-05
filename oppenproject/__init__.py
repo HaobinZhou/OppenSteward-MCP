@@ -1,1 +1,1 @@
-"""OppenProject: read-only project access through MCP."""
+"""OppenSteward-MCP: governance-only MCP over OAuth HTTP or trusted stdio."""

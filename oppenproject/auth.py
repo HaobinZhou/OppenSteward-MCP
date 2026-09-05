@@ -26,7 +26,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
 
-from .config import Settings
+from .config import APP_NAME, Settings
 
 SCOPE = "governance:read"
 ACCESS_TTL = 3600
@@ -52,6 +52,10 @@ class Store:
     def __init__(self, settings: Settings):
         settings.state_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
         settings.state_dir.chmod(0o700)
+        if os.name == "nt":
+            from .windows_fs import make_private
+
+            make_private(settings.state_dir, directory=True)
         self.path = settings.state_dir / "oauth.sqlite3"
         with self.connection() as db:
             db.execute(
@@ -59,6 +63,8 @@ class Store:
                 "PRIMARY KEY (kind, key))"
             )
         self.path.chmod(0o600)
+        if os.name == "nt":
+            make_private(self.path)
 
     @contextmanager
     def connection(self):
@@ -264,14 +270,14 @@ class OAuthProvider:
         esc = html.escape
         redirect = data["params"]["redirect_uri"]
         return f'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>授权 OppenProject</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>授权 {APP_NAME}</title>
 <style>body{{font:16px system-ui;background:#f3f4f6;color:#17212d;margin:0;padding:8vh 20px}}
 main{{max-width:540px;margin:auto;background:white;padding:32px;border-radius:16px}}
 h1{{font-size:26px}}p{{line-height:1.6;overflow-wrap:anywhere}}small{{color:#536172}}
 input{{box-sizing:border-box;width:100%;padding:12px;border:1px solid #9daab8;border-radius:8px}}
 button{{padding:12px 20px;margin-top:20px;border:0;border-radius:8px;cursor:pointer}}
 button[value=allow]{{background:#164e63;color:white}}.error{{color:#b42318}}</style></head>
-<body><main><small>OPPENPROJECT · 项目治理</small><h1>授权读取项目治理文件</h1>
+<body><main><small>{APP_NAME} · 项目治理</small><h1>授权读取项目治理文件</h1>
 <p>客户端：<strong>{esc(data["client_name"])}</strong></p>
 <p>授权后，ChatGPT 可发现受管理项目，只能读取治理索引、Memory 和 Attention 的索引及已登记条目。
 此范围也适用于之后自动发现的项目。权限：<code>{SCOPE}</code>。</p>
@@ -399,7 +405,15 @@ def configure_owner(settings: Settings, rotate=False):
     store.revoke_all()
     store.put("meta", "owner_password", hash_password(password))
     target = settings.state_dir / "owner-access.txt"
-    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
-    with os.fdopen(fd, "w") as output:
-        output.write(password + "\n")
+    if os.name == "nt":
+        from .windows_fs import make_private, open_beneath
+
+        with open_beneath(target.parent, (target.name,), write=True) as fd:
+            os.ftruncate(fd, 0)
+            os.write(fd, (password + "\n").encode("utf-8"))
+        make_private(target)
+    else:
+        fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as output:
+            output.write(password + "\n")
     target.chmod(0o600)

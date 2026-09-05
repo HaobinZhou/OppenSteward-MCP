@@ -29,7 +29,7 @@ from starlette.routing import Mount, Route
 
 from .auth import CONTENT_SECURITY_POLICY, SCOPE, OAuthProvider
 from .catalog import AccessDenied, Catalog
-from .config import Settings
+from .config import APP_NAME, Settings
 
 http_log = logging.getLogger("oppenproject.http")
 
@@ -102,7 +102,7 @@ class GovernanceMCP(FastMCP):
     async def list_tools(self):
         # Explicit per-tool policy lets ChatGPT refresh its permission metadata.
         descriptors = await super().list_tools()
-        schemes = [{"type": "oauth2", "scopes": [SCOPE]}]
+        schemes = [{"type": "oauth2", "scopes": [SCOPE]}] if self.settings.auth else [{"type": "noauth"}]
         for descriptor in descriptors:
             descriptor.securitySchemes = schemes
             descriptor.meta = {**(descriptor.meta or {}), "securitySchemes": schemes}
@@ -183,12 +183,29 @@ class BoundaryMiddleware:
         await self.app(scope, next_receive, secure_send)
 
 
-def create_app(settings: Settings):
-    provider = OAuthProvider(settings)
-    catalog = Catalog(settings)
+@asynccontextmanager
+async def discovery_lifespan(catalog):
+    async def discover():
+        while True:
+            await run_in_threadpool(catalog.refresh)
+            await asyncio.sleep(1 if catalog.report.get("bounded") else catalog.settings.scan_interval)
+
+    worker = asyncio.create_task(discover())
+    try:
+        yield {}
+    finally:
+        catalog.stop_event.set()
+        worker.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await worker
+
+
+def create_mcp(settings: Settings, catalog: Catalog, provider=None):
+    if (settings.transport == "http") != (provider is not None):
+        raise ValueError("HTTP requires OAuth; stdio uses the local process/tunnel trust boundary")
     host = urlsplit(settings.public_url).hostname
     mcp = GovernanceMCP(
-        "OppenProject",
+        APP_NAME,
         instructions=(
             "Read-only GOVERNANCE access to projects managed by oppen-project-steward or stepwise-r-project. "
             "Call list_projects, then project_overview. Only the governance registry and indexed "
@@ -199,11 +216,14 @@ def create_app(settings: Settings):
             "Use offsets until next_offset is null for complete files. No write or shell tools are available."
         ),
         token_verifier=provider,
+        lifespan=(lambda _: discovery_lifespan(catalog)) if settings.transport == "stdio" else None,
         auth=AuthSettings(
             issuer_url=AnyHttpUrl(settings.public_url),
             resource_server_url=AnyHttpUrl(settings.resource),
             required_scopes=[SCOPE],
-        ),
+        )
+        if provider
+        else None,
         stateless_http=True,
         json_response=True,
         transport_security=TransportSecuritySettings(
@@ -281,7 +301,7 @@ def create_app(settings: Settings):
         """
         result = catalog.search(query, project_id, glob, limit)
         for item in result["results"]:
-            item["url"] = settings.public_url + "/files/" + item["project_id"] + "/" + quote(item["path"])
+            item["url"] = citation_url(settings, item["project_id"], item["path"])
         return result
 
     @mcp.tool(annotations=readonly)
@@ -292,7 +312,7 @@ def create_app(settings: Settings):
             "id": id,
             "title": result["path"],
             "text": result.pop("content"),
-            "url": settings.public_url + "/files/" + result["project_id"] + "/" + quote(result["path"]),
+            "url": citation_url(settings, result["project_id"], result["path"]),
             "metadata": result,
         }
 
@@ -301,28 +321,30 @@ def create_app(settings: Settings):
         """Read the locally installed SKILL.md for either supported management skill."""
         if skill not in {"oppen-project-steward", "stepwise-r-project"}:
             raise ValueError("Unknown skill")
-        path = settings.skill_root / skill / "SKILL.md"
+        path = settings.skill_guide(skill)
         return {"skill": skill, "source": str(path), "content": path.read_text(encoding="utf-8")}
 
-    # Constructing this initializes the SDK's session manager, used by the outer lifespan.
+    return mcp
+
+
+def citation_url(settings, project_id, path):
+    prefix = settings.public_url + "/files/" if settings.transport == "http" else "oppen-steward://"
+    return prefix + project_id + "/" + quote(path)
+
+
+def create_app(settings: Settings):
+    if settings.transport != "http":
+        raise ValueError("HTTP is available only in explicitly selected OAuth HTTP mode")
+    provider = OAuthProvider(settings)
+    catalog = Catalog(settings)
+    host = urlsplit(settings.public_url).hostname
+    mcp = create_mcp(settings, catalog, provider)
     mcp_app = mcp.streamable_http_app()
 
     @asynccontextmanager
     async def lifespan(app):
-        async def discover():
-            while True:
-                await run_in_threadpool(catalog.refresh)
-                await asyncio.sleep(1 if catalog.report.get("bounded") else settings.scan_interval)
-
-        worker = asyncio.create_task(discover())
-        try:
-            async with mcp.session_manager.run():
-                yield
-        finally:
-            catalog.stop_event.set()
-            worker.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await worker
+        async with discovery_lifespan(catalog), mcp.session_manager.run():
+            yield
 
     async def metadata(request):
         base = settings.public_url
@@ -358,7 +380,7 @@ def create_app(settings: Settings):
                 "authorization_servers": [settings.public_url],
                 "scopes_supported": [SCOPE],
                 "bearer_methods_supported": ["header"],
-                "resource_name": "OppenProject",
+                "resource_name": APP_NAME,
             }
         )
 
@@ -399,12 +421,10 @@ def create_app(settings: Settings):
         return Response(status_code=200)
 
     async def info(request):
-        return JSONResponse(
-            {"service": "OppenProject", "mcp": settings.resource, "access": f"OAuth / {SCOPE}"}
-        )
+        return JSONResponse({"service": APP_NAME, "mcp": settings.resource, "access": f"OAuth / {SCOPE}"})
 
     async def health(request):
-        return JSONResponse({"status": "ok", "service": "OppenProject"})
+        return JSONResponse({"status": "ok", "service": APP_NAME})
 
     async def file_view(request: Request):
         bearer = request.headers.get("authorization", "")

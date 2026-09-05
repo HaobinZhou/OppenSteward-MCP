@@ -20,16 +20,17 @@ def settings(tmp_path):
     root.mkdir()
     project = root / "示例项目"
     (project / ".oppen-project-steward").mkdir(parents=True)
-    (project / ".oppen-project-steward/registry.md").write_text(STEWARD + "\n# Registry\n")
+    (project / ".oppen-project-steward/registry.md").write_text(STEWARD + "\n# Registry\n", encoding="utf-8")
     memory = project / ".oppen-project-steward/Memory"
     (memory / "entries").mkdir(parents=True)
     (memory / "index.md").write_text(
         "<!-- oppen-project-steward:memory-index -->\n"
         "| ID | Title | Status | Related Topics |\n"
-        "| M-0001 | Example | active | - |\n"
+        "| M-0001 | Example | active | - |\n",
+        encoding="utf-8",
     )
-    (memory / "entries/M-0001.md").write_text("# Example\n检索 alpha\nline three\n")
-    (project / "notes.md").write_text("private-project-content\n")
+    (memory / "entries/M-0001.md").write_text("# Example\n检索 alpha\nline three\n", encoding="utf-8")
+    (project / "notes.md").write_text("private-project-content\n", encoding="utf-8")
     settings = Settings(
         public_url="https://project.example.test",
         scan_roots=[str(root)],
@@ -92,7 +93,10 @@ def login_code(client, credentials):
     response, verifier = begin(client, credentials)
     form = consent_form(client, response)
     settings = client.app.state.provider.settings
-    form.update(password=(settings.state_dir / "owner-access.txt").read_text().strip(), decision="allow")
+    form.update(
+        password=(settings.state_dir / "owner-access.txt").read_text(encoding="utf-8").strip(),
+        decision="allow",
+    )
     response = client.post("/consent", data=form, headers={"Origin": settings.public_url})
     assert response.status_code == 303, response.text
     params = parse_qs(urlsplit(response.headers["location"]).query)

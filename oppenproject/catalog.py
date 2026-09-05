@@ -42,6 +42,12 @@ SKIP_DIRS = {
     "System",
     ".pytest_cache",
     ".ruff_cache",
+    "Windows",
+    "Program Files",
+    "Program Files (x86)",
+    "AppData",
+    "$Recycle.Bin",
+    "System Volume Information",
 }
 SECRET_PARTS = {".ssh", ".aws", ".azure", ".gnupg", ".kube", ".config", ".runtime", ".git"}
 SECRET_NAMES = {
@@ -68,7 +74,7 @@ class AccessDenied(ValueError):
 
 def relative_parts(path: str) -> tuple[str, ...]:
     p = PurePosixPath(path)
-    if p.is_absolute() or ".." in p.parts or "\\" in path or "\x00" in path:
+    if p.is_absolute() or ".." in p.parts or "\\" in path or "\x00" in path or ":" in path:
         raise AccessDenied("Use a project-relative path without '..', backslashes or NUL")
     parts = p.parts
     for part in parts:
@@ -93,6 +99,15 @@ def open_beneath(root: Path, path: str = ".", directory: bool = False, expected_
     directories are accepted, so devices, sockets and FIFOs cannot block or escape.
     """
     parts = relative_parts(path)
+    if os.name == "nt":
+        from .windows_fs import open_beneath as windows_open
+
+        try:
+            with windows_open(root, parts, directory, expected_root) as fd:
+                yield fd
+        except OSError as e:
+            raise AccessDenied("Path unavailable, replaced, linked or not an ordinary local file") from e
+        return
     fd = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
     try:
         for part in root.parts[1:]:
@@ -221,7 +236,10 @@ class Catalog:
                 self.visited += 1
                 try:
                     # A descriptor anchors traversal and refuses a directory replaced by a symlink.
-                    with open_beneath(p, directory=True) as fd, os.scandir(fd) as iterator:
+                    with (
+                        open_beneath(p, directory=True) as fd,
+                        os.scandir(p if os.name == "nt" else fd) as iterator,
+                    ):
                         entries = list(iterator)
                         names = {entry.name for entry in entries}
                         if ".oppen-project-steward" in names or "project.md" in names:
@@ -235,7 +253,12 @@ class Catalog:
                                 continue
                             if str(p) == "/Volumes" and entry.name == "Macintosh HD":
                                 continue
-                            if entry.is_dir(follow_symlinks=False) and not self.excluded(p / entry.name):
+                            if (
+                                entry.is_dir(follow_symlinks=False)
+                                and not getattr(entry.stat(follow_symlinks=False), "st_file_attributes", 0)
+                                & 0x400  # Windows reparse points, including junctions.
+                                and not self.excluded(p / entry.name)
+                            ):
                                 children.append(p / entry.name)
                         self.pending.extend(sorted(children))
                 except (AccessDenied, OSError):
@@ -348,7 +371,7 @@ class Catalog:
             allowed = self.governance_paths(project)
             directories = self.allowed_directories(allowed)
             entries = []
-            for name in sorted(os.listdir(fd)):
+            for name in sorted(os.listdir(Path(project.root) / path if os.name == "nt" else fd)):
                 rel = str(PurePosixPath(path) / name)
                 try:
                     relative_parts(rel)
@@ -356,7 +379,13 @@ class Catalog:
                         continue
                     if self.excluded(Path(project.root) / rel):
                         continue
-                    st = os.stat(name, dir_fd=fd, follow_symlinks=False)
+                    st = (
+                        (Path(project.root) / rel).lstat()
+                        if os.name == "nt"
+                        else os.stat(name, dir_fd=fd, follow_symlinks=False)
+                    )
+                    if getattr(st, "st_file_attributes", 0) & 0x400:
+                        continue
                     if not (stat.S_ISREG(st.st_mode) or stat.S_ISDIR(st.st_mode)):
                         continue
                     if stat.S_ISREG(st.st_mode) and st.st_nlink > 1:
@@ -386,7 +415,9 @@ class Catalog:
             raise ValueError("encoding must be utf-8 or base64")
         with self.opened(project_id, path) as (project, fd):
             before = os.fstat(fd)
-            data = os.pread(fd, length, offset)
+            # Each request owns a separate descriptor; seek/read is safe on Windows too.
+            os.lseek(fd, offset, os.SEEK_SET)
+            data = os.read(fd, length)
             after = os.fstat(fd)
             if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
                 raise ValueError("File changed during read; retry")

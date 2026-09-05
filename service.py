@@ -11,7 +11,7 @@ import sys
 import time
 from pathlib import Path
 
-from oppenproject.config import ROOT, Settings
+from oppenproject.config import APP_NAME, ROOT, Settings
 
 LABEL = "com.oppen.project-mcp"
 
@@ -19,7 +19,7 @@ LABEL = "com.oppen.project-mcp"
 def detached(settings, command):
     """Start in the invoking application's existing filesystem permission context."""
     state = settings.state_dir / "process.json"
-    recorded = json.loads(state.read_text()) if state.exists() else {}
+    recorded = json.loads(state.read_text(encoding="utf-8")) if state.exists() else {}
     pid = recorded.get("pid")
     running = False
     if pid:
@@ -51,7 +51,7 @@ def detached(settings, command):
     if command == "stop":
         return
     if running:
-        print("OppenProject is already running; use restart after changing configuration.")
+        print(f"{APP_NAME} is already running; use restart after changing configuration.")
         return
     with (settings.state_dir / "server.log").open("ab") as log:
         process = subprocess.Popen(
@@ -63,13 +63,13 @@ def detached(settings, command):
             start_new_session=True,
             close_fds=True,
         )
-    state.write_text(json.dumps({"pid": process.pid}) + "\n")
+    state.write_text(json.dumps({"pid": process.pid}) + "\n", encoding="utf-8")
     state.chmod(0o600)
     time.sleep(1)
     if process.poll() is not None:
         state.unlink(missing_ok=True)
         raise SystemExit("Server did not start; inspect .runtime/server.log")
-    print(f"OppenProject started (PID {process.pid}) at {settings.host}:{settings.port}")
+    print(f"{APP_NAME} started (PID {process.pid}) at {settings.host}:{settings.port}")
 
 
 def main():
@@ -77,6 +77,8 @@ def main():
     parser.add_argument("command", choices=["start", "stop", "restart", "status", "install", "uninstall"])
     args = parser.parse_args()
     settings = Settings.load()
+    if settings.transport != "http":
+        raise SystemExit("This manager starts HTTP/OAuth only; stdio is launched by tunnel-client")
     if args.command in {"start", "stop", "restart", "status"}:
         return detached(settings, args.command)
     domain = f"gui/{os.getuid()}"
@@ -112,10 +114,10 @@ def main():
         installed.chmod(0o600)
         target = installed
     subprocess.run(["launchctl", "bootstrap", domain, str(target)], check=True)
-    print(f"OppenProject started at {settings.host}:{settings.port}; MCP: {settings.resource}")
+    print(f"{APP_NAME} started at {settings.host}:{settings.port}; MCP: {settings.resource}")
 
 
 if __name__ == "__main__":
     if sys.platform != "darwin":
-        raise SystemExit("This service manager is macOS-only; use run.py serve on other POSIX systems")
+        raise SystemExit("This optional manager is macOS-only; use run.py serve on Windows or Linux")
     main()

@@ -44,7 +44,7 @@ def test_pkce_flow_and_authenticated_mcp(client, method):
         "initialize",
         {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "1"}},
     )
-    assert init["result"]["serverInfo"]["name"] == "OppenProject"
+    assert init["result"]["serverInfo"]["name"] == "OppenSteward-MCP"
     tools = rpc(client, access, "tools/list")["result"]["tools"]
     assert {t["name"] for t in tools} == {
         "list_projects",
@@ -93,7 +93,10 @@ def test_consent_preserves_browser_origin_and_rejects_opaque_origin(client, sett
     assert len(page.headers.get_list("content-security-policy")) == 1
     assert "form-action 'self' " + CALLBACK in page.headers["content-security-policy"]
     form = consent_form(client, response)
-    form.update(password=(settings.state_dir / "owner-access.txt").read_text().strip(), decision="allow")
+    form.update(
+        password=(settings.state_dir / "owner-access.txt").read_text(encoding="utf-8").strip(),
+        decision="allow",
+    )
     for origin in ["null", "https://chatgpt.com", "https://evil.test"]:
         rejected = client.post("/consent", data=form, headers={"Origin": origin})
         assert rejected.status_code == 403

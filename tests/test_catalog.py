@@ -32,10 +32,10 @@ def test_discovers_both_skills_nested_legacy_and_excludes_fake_markers(catalog, 
     ]:
         project = root / name
         project.mkdir()
-        (project / "project.md").write_text(marker)
+        (project / "project.md").write_text(marker, encoding="utf-8")
     nested = Path(first(catalog).root) / "nested"
     nested.mkdir()
-    (nested / "project.md").write_text("<!-- stepwise-r-project:v3 -->")
+    (nested / "project.md").write_text("<!-- stepwise-r-project:v3 -->", encoding="utf-8")
     catalog.refresh()
     assert len(catalog.projects) == 5
     assert {p.version for p in catalog.projects.values()} == {"v3", "v2", "legacy-layout"}
@@ -50,6 +50,8 @@ def test_discovers_both_skills_nested_legacy_and_excludes_fake_markers(catalog, 
         "a/../../secret",
         "a\\..\\x",
         "a\x00b",
+        "C:/Windows/win.ini",
+        "project.md:private-stream",
         ".env",
         ".env.production",
         ".git/config",
@@ -64,34 +66,41 @@ def test_rejects_escape_and_credential_paths(catalog, path):
         catalog.read_file(first(catalog).id, path)
 
 
-def test_links_special_files_and_root_replacement(catalog, tmp_path):
+@pytest.mark.parametrize("kind", ["symlink", "hardlink", "fifo"])
+def test_links_and_special_files(catalog, tmp_path, kind):
+    if kind == "fifo" and not hasattr(os, "mkfifo"):
+        pytest.skip("FIFOs are POSIX-only")
     project = first(catalog)
     root = Path(project.root)
     outside = tmp_path / "outside"
-    outside.write_text("secret")
+    outside.write_text("secret", encoding="utf-8")
     # Use an ALLOWED path so these checks exercise descriptor safety, not just the allowlist.
     entry = root / MEMORY_ENTRY
     entry.unlink()
-    for kind in ["symlink", "hardlink", "fifo"]:
-        if kind == "symlink":
+    if kind == "symlink":
+        try:
             entry.symlink_to(outside)
-        elif kind == "hardlink":
-            os.link(outside, entry)
-        else:
-            os.mkfifo(entry)
-        with pytest.raises(AccessDenied):
-            catalog.read_file(project.id, MEMORY_ENTRY)
-        assert not catalog.list_files(project.id, str(Path(MEMORY_ENTRY).parent))["entries"]
-        entry.unlink()
-    entry.parent.rmdir()
-    entry.parent.symlink_to(tmp_path, target_is_directory=True)
+        except OSError as error:
+            if os.name == "nt" and getattr(error, "winerror", None) == 1314:
+                pytest.skip("Windows requires permission to create symlinks")
+            raise
+    elif kind == "hardlink":
+        os.link(outside, entry)
+    else:
+        os.mkfifo(entry)
     with pytest.raises(AccessDenied):
         catalog.read_file(project.id, MEMORY_ENTRY)
+    assert not catalog.list_files(project.id, ".oppen-project-steward/Memory/entries")["entries"]
+
+
+def test_root_replacement(catalog):
+    project = first(catalog)
+    root = Path(project.root)
     moved = root.with_name("moved")
     root.rename(moved)
     root.mkdir()
     (root / ".oppen-project-steward").mkdir()
-    (root / ".oppen-project-steward/registry.md").write_text(STEWARD)
+    (root / ".oppen-project-steward/registry.md").write_text(STEWARD, encoding="utf-8")
     with pytest.raises(AccessDenied):
         catalog.read_file(project.id, project.registry)
     with (
@@ -99,6 +108,22 @@ def test_links_special_files_and_root_replacement(catalog, tmp_path):
         open_beneath(root, directory=True, expected_root=(project.device, project.inode)),
     ):
         pass
+
+
+def test_parent_symlink(catalog, tmp_path):
+    project = first(catalog)
+    root = Path(project.root)
+    entry = root / MEMORY_ENTRY
+    entry.unlink()
+    entry.parent.rmdir()
+    try:
+        entry.parent.symlink_to(tmp_path, target_is_directory=True)
+    except OSError as error:
+        if os.name == "nt" and getattr(error, "winerror", None) == 1314:
+            pytest.skip("Windows requires permission to create symlinks")
+        raise
+    with pytest.raises(AccessDenied):
+        catalog.read_file(project.id, MEMORY_ENTRY)
 
 
 def test_large_governance_text_chunks_are_exact_and_search_is_bounded(catalog):
@@ -123,7 +148,7 @@ def test_removed_marker_and_excluded_root_fail_closed(catalog, settings):
     marker.unlink()
     with pytest.raises(AccessDenied):
         catalog.list_files(project.id)
-    marker.write_text(STEWARD)
+    marker.write_text(STEWARD, encoding="utf-8")
     settings.exclude_roots = [project.root]
     with pytest.raises(AccessDenied):
         catalog.read_file(project.id, "notes.md")
@@ -168,15 +193,17 @@ def test_governance_allowlist_for_all_layouts(settings, layout):
     registry = prefix + "registry.md" if prefix else "project.md"
     (root / registry).parent.mkdir(exist_ok=True)
     marker = f"<!-- {skill}:v{'2' if layout == 'r-v2' else '3'} -->"
-    (root / registry).write_text(marker + "\n[Referenced data](Data/raw.csv)\n")
+    (root / registry).write_text(marker + "\n[Referenced data](Data/raw.csv)\n", encoding="utf-8")
     allowed = {registry}
     for system, letter, title in [("Memory", "M", "Decision Memory"), ("Attention", "A", "Human Attention")]:
         index = prefix + system + "/index.md"
         entry = prefix + system + f"/entries/{letter}-0001.md"
         (root / entry).parent.mkdir(parents=True)
         header = f"# {title}\n" if layout.startswith("r-") else f"<!-- {skill}:{system.lower()}-index -->\n"
-        (root / index).write_text(header + f"| {letter}-0001 | decision | entries/{letter}-0001.md |\n")
-        (root / entry).write_text("GOVERNANCE_DECISION_CONTENT")
+        (root / index).write_text(
+            header + f"| {letter}-0001 | decision | entries/{letter}-0001.md |\n", encoding="utf-8"
+        )
+        (root / entry).write_text("GOVERNANCE_DECISION_CONTENT", encoding="utf-8")
         if layout != "r-v2":
             allowed.update({index, entry})
 
@@ -206,7 +233,7 @@ def test_governance_allowlist_for_all_layouts(settings, layout):
         blocked += ["project.md", "Memory/index.md", "Attention/index.md"]
     for path in blocked:
         (root / path).parent.mkdir(parents=True, exist_ok=True)
-        (root / path).write_text("PRIVATE_DATA_NEVER_EXPOSE")
+        (root / path).write_text("PRIVATE_DATA_NEVER_EXPOSE", encoding="utf-8")
     if layout == "r-v2":
         blocked += ["Memory/index.md", "Memory/entries/M-0001.md", "Attention/index.md"]
     catalog = Catalog(settings)
@@ -240,10 +267,10 @@ def test_index_changes_and_malformed_indices_fail_closed(catalog):
     project = first(catalog)
     index = Path(project.root) / ".oppen-project-steward/Memory/index.md"
     assert catalog.read_file(project.id, MEMORY_ENTRY)
-    index.write_text("<!-- oppen-project-steward:memory-index -->\n_None registered._\n")
+    index.write_text("<!-- oppen-project-steward:memory-index -->\n_None registered._\n", encoding="utf-8")
     with pytest.raises(AccessDenied):
         catalog.read_file(project.id, MEMORY_ENTRY)
-    index.write_text("PRIVATE_DATA_WITHOUT_A_GOVERNANCE_MARKER")
+    index.write_text("PRIVATE_DATA_WITHOUT_A_GOVERNANCE_MARKER", encoding="utf-8")
     with pytest.raises(AccessDenied):
         catalog.read_file(project.id, ".oppen-project-steward/Memory/index.md")
     assert not catalog.search("PRIVATE_DATA_WITHOUT_A_GOVERNANCE_MARKER")["results"]
@@ -258,7 +285,7 @@ def test_authenticated_tools_and_downloads_cannot_bypass_allowlist(client):
     for path in blocked:
         target = Path(project.root) / path
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text("MUST_NOT_REACH_GPT")
+        target.write_text("MUST_NOT_REACH_GPT", encoding="utf-8")
         file_id = project.id + ":" + base64.urlsafe_b64encode(path.encode()).decode().rstrip("=")
         for name, arguments in [
             ("read_file", {"project_id": project.id, "path": path}),

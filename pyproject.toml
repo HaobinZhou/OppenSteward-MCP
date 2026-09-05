@@ -1,9 +1,11 @@
 [project]
-name = "oppenproject"
-version = "0.1.0"
-description = "OAuth-protected, read-only MCP access to skill-managed local projects"
+name = "oppen-steward-mcp"
+version = "0.2.0"
+description = "Governance-only MCP for Steward and Stepwise projects, with OAuth HTTP and Secure MCP Tunnel"
+readme = "README.md"
+license = "MIT"
 requires-python = ">=3.12"
-dependencies = ["mcp>=1.28,<2"]
+dependencies = ["mcp>=1.28,<2", "python-dotenv>=1,<2", "pywin32>=310; sys_platform == 'win32'"]
 
 [dependency-groups]
 dev = ["pytest>=8,<10", "pytest-asyncio>=0.25,<2", "ruff>=0.11,<1"]

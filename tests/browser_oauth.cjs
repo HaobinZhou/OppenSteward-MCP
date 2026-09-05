@@ -30,7 +30,7 @@ let cspBlocked = false;
   try {
     phase = 'registration';
     let response = await context.request.post(issuer + '/register', { data: {
-      client_name: 'OppenProject browser verification', redirect_uris: [callback],
+      client_name: 'OppenSteward-MCP browser verification', redirect_uris: [callback],
       token_endpoint_auth_method: 'none', grant_types: ['authorization_code', 'refresh_token'],
       response_types: ['code'], scope: 'governance:read',
     }});

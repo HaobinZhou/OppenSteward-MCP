@@ -42,12 +42,12 @@ def test_native_browser_consent_and_callback(settings, tmp_path):
     callback_thread.start()
     callback = f"http://127.0.0.1:{callback_server.server_port}/callback"
     # Add an ordinary temporary project so the registered protocol verifier can also read a file.
-    sample = Path(settings.scan_roots[0]) / "OppenProject"
+    sample = Path(settings.scan_roots[0]) / "OppenSteward-MCP"
     (sample / ".oppen-project-steward").mkdir(parents=True)
     (sample / ".oppen-project-steward/registry.md").write_text(
-        "<!-- oppen-project-steward:v3 -->\n# OppenProject\n"
+        "<!-- oppen-project-steward:v3 -->\n# OppenSteward-MCP\n", encoding="utf-8"
     )
-    (sample / "README.md").write_text("# OppenProject temporary verification project\n")
+    (sample / "README.md").write_text("# OppenSteward-MCP temporary verification project\n", encoding="utf-8")
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
@@ -64,7 +64,10 @@ def test_native_browser_consent_and_callback(settings, tmp_path):
                 time.sleep(0.02)
             assert server.started
             config = tmp_path / "browser-config.json"
-            config.write_text(json.dumps({**asdict(local), "browser_test_callback": callback}, default=str))
+            config.write_text(
+                json.dumps({**asdict(local), "browser_test_callback": callback}, default=str),
+                encoding="utf-8",
+            )
             result = subprocess.run(
                 [
                     "node",

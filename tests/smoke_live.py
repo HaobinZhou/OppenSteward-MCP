@@ -31,14 +31,14 @@ async def main(base_url, settings=None):
     access = None
     async with httpx.AsyncClient(base_url=base_url, timeout=30, trust_env=False) as client:
         health = await client.get("/healthz")
-        assert health.json()["service"] == "OppenProject"
+        assert health.json()["service"] == "OppenSteward-MCP"
         assert (await client.get("/mcp")).status_code == 401
         resource = (await client.get("/.well-known/oauth-protected-resource/mcp")).json()
         assert resource["resource"] == settings.resource
         response = await client.post(
             "/register",
             json={
-                "client_name": "OppenProject local verification",
+                "client_name": "OppenSteward-MCP local verification",
                 "redirect_uris": [callback],
                 "token_endpoint_auth_method": "none",
                 "grant_types": ["authorization_code", "refresh_token"],
@@ -68,7 +68,8 @@ async def main(base_url, settings=None):
             page = await client.get(location.path + "?" + location.query)
             fields = dict(re.findall(r'type="hidden" name="([^"]+)" value="([^"]+)"', page.text))
             fields.update(
-                password=(settings.state_dir / "owner-access.txt").read_text().strip(), decision="allow"
+                password=(settings.state_dir / "owner-access.txt").read_text(encoding="utf-8").strip(),
+                decision="allow",
             )
             headers = {"Origin": settings.public_url}
             if base_url.startswith("http://127.0.0.1:"):
@@ -104,7 +105,7 @@ async def main(base_url, settings=None):
                         tool_list = await session.list_tools()
                         catalog = await session.call_tool("list_projects", {})
                         discovery = catalog.structuredContent["discovery"]
-                        result = await session.call_tool("list_projects", {"query": "OppenProject"})
+                        result = await session.call_tool("list_projects", {"query": "OppenSteward-MCP"})
                         assert not result.isError and result.structuredContent
                         projects = result.structuredContent["projects"]
                         assert projects, "Discovery still running; retry after the first batch"
@@ -112,7 +113,10 @@ async def main(base_url, settings=None):
                         result = await session.call_tool(
                             "read_file", {"project_id": pid, "path": projects[0]["registry"]}
                         )
-                        assert not result.isError and "OppenProject" in result.structuredContent["content"]
+                        assert (
+                            not result.isError
+                            and "<!-- oppen-project-steward:v3 -->" in result.structuredContent["content"]
+                        )
                         denied = await session.call_tool(
                             "read_file", {"project_id": pid, "path": "../outside"}
                         )
