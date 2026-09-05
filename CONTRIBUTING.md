@@ -9,7 +9,8 @@ The current behavioral definitions are registered README sections; update the
 existing owner when changing a contract. The governance-only allowlist applies
 to every transport and read surface. Add regression coverage for a changed
 authorization, path or transport boundary. External skill sources are not
-vendored; use your own installed skill to refresh Steward audits and registries.
+vendored; use your own installed skill to refresh Steward audits and registries
+locally. Keep `.oppen-project-steward/` out of commits; it is ignored local state.
 
 ## Local checks
 
@@ -53,8 +54,8 @@ authorized workspace and runtime key; local stdio tests cannot verify it.
 
 ## Release review
 
-Verify the lockfile, README platform status, current contract audits, and ignored
-deployment state before publishing. Git owns release history; do not copy old
+Verify the lockfile, README platform status, and ignored local state before
+publishing. Git owns release history; do not copy old
 outputs into dated folders. Keep the existing `v0.1.0` freeze intact. Public
 identity is OppenSteward-MCP; the internal `oppenproject` module and existing
 macOS service label remain stable for compatibility.

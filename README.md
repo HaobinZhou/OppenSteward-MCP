@@ -244,6 +244,6 @@ uv run pytest -q
 
 测试使用临时项目和测试口令。浏览器测试等详细步骤见 [贡献指南](CONTRIBUTING.md)，安全问题的反馈方式见 [SECURITY.md](SECURITY.md)。
 
-本项目本身也使用 Oppen Project Steward 管理，可在 [项目登记表](.oppen-project-steward/registry.md) 中查看。
+本项目本身也使用 Oppen Project Steward 管理，相关记录只保留在本机，不随仓库发布。
 
 本仓库采用 [MIT License](LICENSE)。外部技能、MCP SDK 和 Tunnel 客户端各自遵循其许可证。
