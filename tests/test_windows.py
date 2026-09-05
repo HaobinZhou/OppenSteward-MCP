@@ -49,8 +49,11 @@ def test_runtime_dacl_only_grants_current_user(settings):
     import win32con
     import win32security
 
-    with win32security.OpenProcessToken(win32api.GetCurrentProcess(), win32con.TOKEN_QUERY) as token:
+    token = win32security.OpenProcessToken(win32api.GetCurrentProcess(), win32con.TOKEN_QUERY)
+    try:
         current = win32security.GetTokenInformation(token, win32security.TokenUser)[0]
+    finally:
+        token.Close()
     for path in [
         settings.state_dir,
         settings.state_dir / "owner-access.txt",

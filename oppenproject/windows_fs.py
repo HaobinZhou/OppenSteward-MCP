@@ -82,8 +82,11 @@ def open_beneath(root: Path, parts: tuple[str, ...], directory=False, expected_r
 
 def make_private(path: Path, *, directory=False):
     """Replace the runtime object's DACL with current-user access, without inheritance."""
-    with win32security.OpenProcessToken(win32api.GetCurrentProcess(), win32con.TOKEN_QUERY) as token:
+    token = win32security.OpenProcessToken(win32api.GetCurrentProcess(), win32con.TOKEN_QUERY)
+    try:
         sid = win32security.GetTokenInformation(token, win32security.TokenUser)[0]
+    finally:
+        token.Close()
     acl = win32security.ACL()
     flags = win32con.OBJECT_INHERIT_ACE | win32con.CONTAINER_INHERIT_ACE if directory else 0
     acl.AddAccessAllowedAceEx(win32security.ACL_REVISION, flags, ntsecuritycon.FILE_ALL_ACCESS, sid)
