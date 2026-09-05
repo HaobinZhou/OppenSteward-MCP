@@ -320,10 +320,25 @@ def test_oauth_old_tokens_cannot_read_write_and_new_consent_works(settings):
     pid = next(iter(app.state.catalog.projects))
     with TestClient(app, base_url=settings.public_url, follow_redirects=False) as client:
         assert asyncio.run(OAuthProvider(settings).verify_token(old["access_token"]))
+        overview = call(client, old["access_token"], "project_overview", project_id=pid)["structuredContent"]
+        assert overview["discussion_mode"] == "write"
+        assert not overview["discussion_access"]["can_read"]
+        assert not overview["discussion_access"]["can_write"]
+        assert overview["discussion_access"]["granted_scopes"] == [SCOPE]
+        assert overview["discussion_access"]["missing_scopes"] == [DISCUSSION_READ, DISCUSSION_WRITE]
+        # Even an old grant must discover the new tools, so the client can request new consent.
+        discovered = rpc(client, old["access_token"], "tools/list")["result"]["tools"]
+        assert len(discovered) == 12
+        assert overview["mcp_tools"] == [t["name"] for t in discovered]
         for tool in ["list_discussions", "read_discussion", "create_discussion", "edit_discussion"]:
             denied = call(client, old["access_token"], tool, project_id=pid)
             assert denied["isError"] and "mcp/www_authenticate" in denied["_meta"]
         credentials, read = grant(client, [SCOPE, DISCUSSION_READ])
+        access = call(client, read["access_token"], "project_overview", project_id=pid)["structuredContent"][
+            "discussion_access"
+        ]
+        assert access["can_read"] and not access["can_write"]
+        assert access["missing_scopes"] == [DISCUSSION_WRITE]
         assert not call(client, read["access_token"], "list_discussions", project_id=pid).get("isError")
         assert call(client, read["access_token"], "create_discussion", project_id=pid)["isError"]
         assert (
@@ -340,6 +355,10 @@ def test_oauth_old_tokens_cannot_read_write_and_new_consent_works(settings):
             == 400
         )
         _, write = grant(client, [SCOPE, DISCUSSION_READ, DISCUSSION_WRITE])
+        access = call(client, write["access_token"], "project_overview", project_id=pid)["structuredContent"][
+            "discussion_access"
+        ]
+        assert access["can_read"] and access["can_write"] and not access["missing_scopes"]
         created = call(
             client,
             write["access_token"],
@@ -403,6 +422,33 @@ async def test_stdio_write_tools_use_same_boundary(discussion):
     store.settings.discussion_mode = "read"
     readonly = create_mcp(store.settings, store.catalog)
     assert {t.name for t in await readonly.list_tools()} & {"create_discussion", "edit_discussion"} == set()
+
+
+@pytest.mark.parametrize("mode", ["off", "read", "write"])
+@pytest.mark.parametrize("legacy", [False, True])
+def test_overview_local_mode_and_legacy_gate_permissions(settings, mode, legacy):
+    settings.discussion_mode = mode
+    app = create_app(settings)
+    if legacy:
+        root = Path(settings.scan_roots[0]) / "旧版项目"
+        # The existing fixture remains a v3 project; add a separate legacy marker.
+        root.mkdir(exist_ok=True)
+        (root / "project.md").write_text("<!-- stepwise-r-project:v2 -->\n", encoding="utf-8")
+    app.state.catalog.refresh()
+    projects = app.state.catalog.projects.values()
+    pid = next(p.id for p in projects if (p.version != "v3") == legacy)
+    with TestClient(app, base_url=settings.public_url, follow_redirects=False) as client:
+        scopes = [SCOPE] + ([DISCUSSION_READ] if mode != "off" else [])
+        scopes += [DISCUSSION_WRITE] if mode == "write" else []
+        _, authorized = grant(client, scopes)
+        overview = call(client, authorized["access_token"], "project_overview", project_id=pid)[
+            "structuredContent"
+        ]
+        access = overview["discussion_access"]
+        assert access["can_read"] == (mode != "off" and not legacy)
+        assert access["can_write"] == (mode == "write" and not legacy)
+        assert not access["missing_scopes"]
+        assert len(overview["mcp_tools"]) == {"off": 8, "read": 10, "write": 12}[mode]
 
 
 def test_mode_config_is_opt_in(tmp_path, monkeypatch):

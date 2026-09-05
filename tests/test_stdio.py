@@ -53,6 +53,11 @@ async def test_real_stdio_process_governance_boundary_and_no_oauth(tmp_path, dis
             projects = result.structuredContent["projects"]
             assert len(projects) == 1
             pid = projects[0]["id"]
+            overview = await session.call_tool("project_overview", {"project_id": pid})
+            access = overview.structuredContent["discussion_access"]
+            assert access["can_write"] == access["can_read"] == (discussion_mode == "write")
+            assert access["granted_scopes"] is None and not access["missing_scopes"]
+            assert overview.structuredContent["mcp_tools"] == [tool.name for tool in listed.tools]
             found = await session.call_tool("search", {"query": "searchable-governance"})
             hit = found.structuredContent["results"][0]
             assert hit["url"].startswith("oppen-steward://")

@@ -110,6 +110,16 @@ async def main(base_url, settings=None):
                         projects = result.structuredContent["projects"]
                         assert projects, "Discovery still running; retry after the first batch"
                         pid = projects[0]["id"]
+                        overview = await session.call_tool("project_overview", {"project_id": pid})
+                        assert not overview.isError
+                        details = overview.structuredContent
+                        assert details["mcp_tools"] == [tool.name for tool in tool_list.tools]
+                        assert (
+                            len(tool_list.tools)
+                            == {"off": 8, "read": 10, "write": 12}[settings.discussion_mode]
+                        )
+                        assert details["discussion_access"]["granted_scopes"] == [SCOPE]
+                        assert not details["discussion_access"]["can_write"]
                         if settings.discussion_mode != "off":
                             denied = await session.call_tool("list_discussions", {"project_id": pid})
                             assert denied.isError and "mcp/www_authenticate" in denied.meta

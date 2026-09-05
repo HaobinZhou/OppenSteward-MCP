@@ -207,7 +207,11 @@ Memory、Attention 的索引分别为 `index.md`，条目路径为 `entries/M-XX
 OPPEN_DISCUSSION_MODE=write
 ```
 
-重启服务后，在 ChatGPT 中刷新工具并重新授权。HTTP 授权页会明确列出讨论的读取、新建和编辑权限；原来的只读授权不会自动获得这些权限。如果旧连接一直不显示新权限，可以移除连接，再用原来的 `/mcp` 地址添加一次。Tunnel 用户重启 `tunnel run` 并刷新工具即可，访问权限由本机配置和 Tunnel 认证共同控制。
+重启服务后，打开 ChatGPT 中这个应用的详情，刷新工具列表，再新开一个对话使用它。开启 `write` 后应有 12 个工具，其中新增的是 `list_discussions`、`read_discussion`、`create_discussion` 和 `edit_discussion`。[OpenAI 的接入说明](https://developers.openai.com/plugins/deploy/connect-chatgpt#refresh-metadata)也要求在工具或认证信息变更后刷新连接。
+
+HTTP 连接还需要重新授权。授权页应明确列出“读取讨论”和“新建和编辑”，口令仍用原来那一个。**如果还是只有 8 个工具，或授权页只提到读取治理文件，请删除 ChatGPT 中的旧应用，再用原来的 `/mcp` 地址添加一次。** 单纯断开后重新登录，可能还在沿用旧应用登记的权限。Tunnel 用户重启 `tunnel run` 并刷新工具即可，访问权限由本机配置和 Tunnel 认证共同控制。
+
+排查时可以让 GPT 查看 `project_overview`：`discussion_mode` 表示本机开关；`discussion_access.can_read` 和 `can_write` 才表示当前连接是否已获准读写。`missing_scopes` 会列出缺少的权限，`mcp_tools` 会列出服务实际提供的工具。如果这里有 12 个，而 GPT 只能调用 8 个，就需要更新 ChatGPT 里的工具列表。
 
 之后可以直接说：“把这段讨论保存到某某项目”，或“打开之前关于部署的讨论，补上刚才的结论”。GPT 会先读取已有内容再编辑；文件在此期间被别人改过，MCP 会要求重新读取，避免用旧内容覆盖新修改。
 
