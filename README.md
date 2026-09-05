@@ -11,7 +11,7 @@ OppenSteward-MCP 会找到由 **Oppen Project Steward** 或 **Stepwise R Project
 
 默认只开放项目治理文档。开启讨论功能后，GPT 还可以读取、新建和编辑 `Discussion` 中的讨论文件。数据文件、源码文件和分析结果仍不开放，保存讨论也不会运行代码或执行里面的建议。
 
-支持 Windows、macOS 和 Linux。目前只在 macOS 上测试过，Windows 和 Linux 还没实测。
+支持 Windows、macOS 和 Linux。目前只在 macOS 上实际接入过 ChatGPT，Windows 和 Linux 的接入流程还没实测。
 
 ## 接入与运行
 

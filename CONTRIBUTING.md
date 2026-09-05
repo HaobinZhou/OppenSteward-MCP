@@ -27,8 +27,11 @@ credentials. Test configuration must not inherit a deployment's `OPPEN_*` values
 Windows tests need a local filesystem supporting file IDs, hard links and ACLs;
 symlink tests may require Developer Mode or permission to create symlinks.
 Platform-specific tests skip with an explicit reason when unavailable. A skip
-is not evidence of platform verification. Only macOS has been tested; Windows
-and Linux remain unverified until their actual test results are recorded.
+is not evidence of platform verification. The unit and protocol suites run in
+[CI on all three platforms](https://github.com/HaobinZhou/OppenSteward-MCP/actions/workflows/checks.yml)
+with Python 3.12 and 3.13. Actual ChatGPT HTTP connection and day-to-day use have
+only been verified on macOS; Windows/Linux account connections and a real Secure
+MCP Tunnel connection still need testing.
 
 ## Optional browser regression
 

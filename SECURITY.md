@@ -19,6 +19,6 @@ and the smallest reproduction. Do not attach `.env`, `config.local.json`,
 credential is exposed, revoke it locally and rotate the appropriate credential
 through its owner (this server's OAuth or OpenAI's Tunnel runtime key).
 
-Windows and Linux branches have not been verified on those platforms. Reports
-about their native path, ACL or process behavior are welcome; macOS test results
-do not establish their security properties.
+CI exercises native filesystem, authorization and protocol behavior on Windows,
+macOS and Linux. Actual ChatGPT account connection has only been tested on macOS.
+Reports about native path, ACL, process or account integration behavior are welcome.
