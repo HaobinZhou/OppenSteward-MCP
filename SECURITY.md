@@ -1,7 +1,7 @@
 # Security
 
 The authoritative exposure and authentication rules are the registered
-[README contracts](README.md#项目发现与文件访问契约). This server is intended for
+[README contracts](README.md#gpt-能看到哪些文件). This server is intended for
 one local owner. Governance document bodies can contain sensitive information;
 the file allowlist does not redact their contents.
 

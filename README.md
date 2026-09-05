@@ -1,167 +1,240 @@
 # OppenSteward-MCP
 
-让网页端 ChatGPT 只读访问本机 **Oppen Project Steward** 和 **Stepwise R Project** 项目的治理文件。提供项目发现、治理目录浏览、文档搜索与读取；不开放数据、源码、Results、Deliverables 或 Audit。
+在 ChatGPT 网页版里查看你电脑上的项目说明、决策记录和待处理事项。
 
-支持 **Windows、macOS、Linux**。**目前仅在 macOS 完成测试；Windows 和 Linux 尚未验证。** Windows 已包含原生文件句柄及 ACL 兼容实现；并不表示已完成 Windows 测试。可选后台管理脚本 `service.py` 仅用于 macOS；三个平台均可前台运行 MCP 或由 Tunnel 启动 stdio 进程。
+OppenSteward-MCP 会找到由 **Oppen Project Steward** 或 **Stepwise R Project** 管理的项目，让 GPT 帮你了解项目进展、查找过去的决定、汇总需要关注的问题。比如，你可以直接问：
 
-Only macOS has been tested. Windows and Linux support is implemented but unverified.
+- “我有哪些项目还有待处理事项？”
+- “这个项目当时为什么选择了这套方案？”
+- “帮我找一下几个项目里关于部署方式的决策记录。”
+
+它只提供项目的治理文档，数据、源码和分析结果不会通过这个 MCP 传给 GPT，也不能用它修改项目或运行代码。
+
+支持 Windows、macOS 和 Linux。目前只在 macOS 上测试过，Windows 和 Linux 还没实测。
 
 ## 接入与运行
 
-Status: frozen
-
-需要 Python 3.12+ 和 [uv](https://docs.astral.sh/uv/getting-started/installation/)。下载或克隆此仓库，在项目目录运行 `uv sync --locked`。Windows 使用 PowerShell，macOS/Linux 使用终端；下面的 `uv run python ...` 命令适用于三个平台。
-
-### Secure MCP Tunnel：无需公网入站端口
-
-采用 OpenAI 官方 [Secure MCP Tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels)，由 `tunnel-client` 启动本机 stdio 服务。需要对应工作区的 Tunnel 权限、Tunnel ID 和 runtime key；账号是否具备这些功能以 OpenAI 的控制台为准。安装对应平台的 [官方 tunnel-client](https://github.com/openai/tunnel-client/releases/latest)，将其加入 PATH，或在 `.env` 指定其可执行文件路径。
-
-复制 `.env.example` 为 `.env`，编辑其中的扫描目录、`OPPEN_TUNNEL_ID` 和 `CONTROL_PLANE_API_KEY`。macOS/Linux 可用 `cp .env.example .env`；Windows 可用 `Copy-Item .env.example .env`。不要把真实密钥提交到 Git。
+先安装 Python 3.12 或更新版本，以及 [uv](https://docs.astral.sh/uv/getting-started/installation/)。下载或克隆本仓库，在项目文件夹里打开终端，运行：
 
 ```sh
 uv sync --locked
+```
+
+Windows 可以使用 PowerShell。下面的 `uv run python ...` 命令在三个平台上通用。
+
+接下来选择一种连接方式：没有公网域名，使用 **Secure MCP Tunnel**；已经有域名和 HTTPS 转发，使用 **HTTP + OAuth**。
+
+### 没有公网域名：使用 Secure MCP Tunnel
+
+这种方式通过 OpenAI 官方 Tunnel 连接你的电脑，不需要配置公网入站端口。你需要先在 OpenAI Platform 中取得 **Tunnel ID** 和 **运行密钥（runtime key）**，并确保工作区已开通相应权限。具体准备步骤见 [OpenAI 的 Tunnel 指南](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels)。
+
+1. 下载与你的系统对应的 [tunnel-client](https://github.com/openai/tunnel-client/releases/latest)，将它加入 PATH。如果不想配置 PATH，也可以把程序的完整路径填入 `.env` 的 `OPPEN_TUNNEL_CLIENT`。
+2. 将 `.env.example` 复制一份，命名为 `.env`。
+3. 打开 `.env`，填入 `OPPEN_TUNNEL_ID` 和 `CONTROL_PLANE_API_KEY`，再把 `OPPEN_SCAN_ROOTS` 改成你的项目所在文件夹。路径写法见下面的“环境变量配置”。
+4. 依次运行：
+
+```sh
 uv run python run.py setup
-uv run python run.py tunnel init --dry-run
 uv run python run.py tunnel init
 uv run python run.py tunnel doctor
 uv run python run.py tunnel run
 ```
 
-在 ChatGPT 开发者模式的应用设置中选择对应 Tunnel 并连接。此方式不需要填写公网域名、不启动本项目的 HTTP 端口，也不使用 `.runtime/owner-access.txt`。`CONTROL_PLANE_API_KEY` 用于官方 Tunnel 运行时认证，与下述 HTTP 登录口令不同。该密钥经子进程环境传递，不写入本项目生成的命令参数或 JSON 配置。Tunnel 子进程继承本机环境。
+`init` 保存连接配置，`doctor` 检查配置，`run` 启动连接。之后在 ChatGPT 开发者模式的应用设置中，选择对应的 Tunnel 并连接。
 
-`init` 使用官方 `sample_mcp_stdio_local` 创建命名 profile；profile 生命周期由官方客户端管理。改动项目位置、Python 环境或 Tunnel ID 后，重新检查/更新 profile，运行 `doctor` 后再启动。`run` 需持续运行，本机休眠或退出后不可用。本项目已测试 stdio 协议及启动器参数；尚未使用真实 OpenAI Tunnel 账号完成端到端接入验证。
+保持最后一个命令运行；关闭它或让电脑休眠后，GPT 就无法继续访问。以后如果移动了项目文件夹、更换了 Python 环境或 Tunnel ID，需要相应更新 Tunnel 的连接配置。
 
-OAuth 的浏览器登录服务不会随 stdio 自动转发，因此这里使用 Tunnel 身份与权限体系。公网 OAuth 采用下面的独立模式。[官方 Tunnel 配置说明](https://github.com/openai/tunnel-client/blob/master/docs/configuration.md)
+这种方式使用 Tunnel 密钥认证，不需要下面 HTTP 模式的登录口令。本机 MCP 通信已做测试，通过真实 ChatGPT 账号连接 Tunnel 还未实测。
 
-### HTTP + OAuth：已有 HTTPS 反向代理
+### 已有域名和 HTTPS 转发：使用 HTTP + OAuth
 
-复制 `.env.http.example` 为 `.env`，将 `OPPEN_PUBLIC_URL` 改为自己的完整 HTTPS origin（不含 `/mcp`），并填写扫描目录：
+将 `.env.http.example` 复制为 `.env`，填入自己的域名和项目路径。例如：
+
+```dotenv
+OPPEN_PUBLIC_URL=https://projects.example.com
+OPPEN_SCAN_ROOTS=["~/Projects"]
+```
+
+域名这一项不需要加 `/mcp`。然后运行：
 
 ```sh
 uv run python run.py setup
 uv run python run.py serve
 ```
 
-默认转发目标为 **`127.0.0.1:8766`**；ChatGPT 中填写 **`https://你的域名/mcp`**，选择 OAuth。授权页要求本机 `.runtime/owner-access.txt` 中的随机口令并明确同意治理文件只读。setup 重复执行不会轮换已有口令或有效授权；口令不会打印到终端。
+把你的 HTTPS 域名转发到 **`127.0.0.1:8766`**，在 ChatGPT 中填写 **`https://你的域名/mcp`**，认证方式选择 **OAuth**。
 
-frpc、HTTPS 证书与其他反向代理由部署者配置。本项目仅监听 loopback。将域名的全部路径转发到同一端口，包括 `/.well-known/*`、`/authorize`、`/consent`、`/register`、`/token`、`/revoke`、`/mcp` 与 `/files/*`；不要只转发 `/mcp`。`/mcp/` 在内部作为别名处理，OAuth resource 始终是 `/mcp`，不产生降级到 HTTP 的重定向。代理头不会改变 issuer。
+连接时会打开授权页。登录口令保存在本机的 **`.runtime/owner-access.txt`** 中，打开这个文件即可查看。输入口令并同意授权后，GPT 就能读取允许分享的治理文档。
 
-macOS 可选后台运行：
+如果使用 frpc 或其他反向代理，请把**整个域名的请求**转发到这个端口。除了 `/mcp`，登录和授权还要使用其他路径，只转发 `/mcp` 会导致连接失败。HTTPS 证书和转发规则需要你自己配置。
+
+### 在 macOS 后台运行
+
+HTTP 模式可以用下面的命令在后台运行：
 
 ```sh
-uv run python service.py start
-uv run python service.py status
-uv run python service.py restart
-uv run python service.py stop
-# 可选用户 LaunchAgent：登录自动运行
-uv run python service.py install
-uv run python service.py uninstall
+uv run python service.py start    # 启动
+uv run python service.py status   # 查看状态
+uv run python service.py restart  # 重启，修改配置后使用
+uv run python service.py stop     # 停止
 ```
 
-后台进程的文件访问权限取决于启动账户及 macOS 隐私授权。Windows/Linux 使用前台命令，或由部署者的进程管理器运行同一命令。不要以管理员/root 身份启动服务来规避目录权限。
+希望登录电脑后自动启动，可以运行 `uv run python service.py install`；取消自动启动用 `uv run python service.py uninstall`。
+
+这个后台管理脚本只适用于 macOS。Windows 和 Linux 可以保持 `run.py serve` 在终端运行，或交给自己常用的进程管理工具。Tunnel 模式则保持 `run.py tunnel run` 运行即可。
+
+<details>
+<summary>部署细节与排查</summary>
+
+HTTP 服务只监听本机回环地址。需要转发的路径包括 `/.well-known/*`、`/authorize`、`/consent`、`/register`、`/token`、`/revoke`、`/mcp` 和 `/files/*`。`/mcp/` 也可以使用，服务会在内部处理，不会重定向到 HTTP；OAuth resource 固定为 `/mcp`，issuer 来自配置的域名，不受代理头影响。
+
+Tunnel 使用本机 stdio 通信，不启动本项目的 HTTP 服务，也不转发 OAuth 登录页。启动器调用官方 `tunnel-client` 的 `sample_mcp_stdio_local` 配置；密钥通过环境变量传递，不写入命令参数或本项目的 JSON 配置。可用 `uv run python run.py tunnel init --dry-run` 查看将要执行的命令。更多选项见 [官方 Tunnel 配置说明](https://github.com/openai/tunnel-client/blob/master/docs/configuration.md)。
+
+如果服务找不到项目，先检查扫描路径和当前账户的文件权限。macOS 还可能需要为启动服务的应用授予文件夹访问权限，无需为此改用管理员或 root 账户。
+
+</details>
 
 ## 环境变量配置
 
-Status: frozen
+日常使用只需要编辑项目文件夹中的 **`.env`**。最常改的是项目路径，例如：
 
-优先级为：显式 CLI 覆盖（例如 `serve --transport`）> 系统环境变量 > `.env` > 兼容的 `config.local.json` > 默认值。默认读取本项目目录中的 `.env`；全局 `--config /path/config.local.json` 可指定 JSON 位置，同时从其旁边读取 `.env`。文件路径相对该配置目录解析，支持 `~`；列表必须是 JSON 字符串数组。`.env` 按 UTF-8 读取，不执行 shell，不展开 `${VAR}`。
+```dotenv
+# macOS / Linux
+OPPEN_SCAN_ROOTS=["~/Projects", "~/Research"]
 
-| 变量 | 默认值 / 含义 |
+# Windows：路径使用正斜线
+# OPPEN_SCAN_ROOTS=["C:/Users/Me/Projects", "D:/Research"]
+
+# 不想让 GPT 访问的文件夹
+OPPEN_EXCLUDE_ROOTS=["~/Projects/private"]
+```
+
+可以填写多个文件夹；不修改时，默认从当前用户的主目录开始查找。路径列表使用上面这种带引号和方括号的写法，`~` 表示用户主目录。
+
+| 设置 | 什么时候需要改 |
 | --- | --- |
-| `OPPEN_TRANSPORT` | 新安装 `stdio`；旧 JSON 未指定 transport 时保持 `http` |
-| `OPPEN_SCAN_ROOTS` | 当前用户主目录；可配置多个本机目录 |
-| `OPPEN_EXCLUDE_ROOTS` | `[]`；排除子树 |
-| `OPPEN_STATE_DIR` | `.runtime`；HTTP 口令、OAuth 数据库与本机日志 |
-| `OPPEN_SKILL_ROOT` | 空；自动查找 `~/.codex/skills`、`~/.agents/skills` 下的两个技能 |
-| `OPPEN_PUBLIC_URL` | `http://127.0.0.1:8766`；公网 HTTP 部署必须换为真实 HTTPS origin |
-| `OPPEN_HOST` / `OPPEN_PORT` | `127.0.0.1` / `8766`；仅允许 loopback，端口 1024–65535 |
-| `OPPEN_SCAN_INTERVAL` | `300` 秒，至少 10 秒 |
-| `OPPEN_SCAN_SECONDS` | `90` 秒，每批扫描预算 |
-| `OPPEN_MAX_SCAN_DIRS` | `500000`，每批目录上限 |
-| `OPPEN_EXTRA_REDIRECT_URIS` | `[]`；额外精确 OAuth 回调，不支持通配符 |
-| `OPPEN_TUNNEL_ID` | OpenAI Platform 中的 `tunnel_...` ID |
-| `OPPEN_TUNNEL_PROFILE` | `oppen-steward`；官方客户端命名 profile |
-| `OPPEN_TUNNEL_CLIENT` | `tunnel-client`；也可填绝对可执行文件路径，Windows 可为 `.exe` |
-| `CONTROL_PLANE_API_KEY` | 仅 Tunnel 模式需要；使用 runtime key |
+| `OPPEN_TRANSPORT` | Tunnel 使用 `stdio`，域名转发使用 `http`；两份示例已经分别填好 |
+| `OPPEN_SCAN_ROOTS` | 指定你的项目所在文件夹 |
+| `OPPEN_EXCLUDE_ROOTS` | 排除不想分享的文件夹及其子文件夹 |
+| `OPPEN_PUBLIC_URL` | HTTP 模式下填写自己的 HTTPS 域名 |
+| `OPPEN_PORT` | 默认 `8766`；端口被占用时可以更换，并同步修改转发规则 |
+| `OPPEN_TUNNEL_ID` | 填入 OpenAI Platform 中的 Tunnel ID |
+| `CONTROL_PLANE_API_KEY` | 填入 Tunnel 的运行密钥 |
+| `OPPEN_TUNNEL_CLIENT` | 找不到 `tunnel-client` 命令时，填写程序的完整路径；Windows 可指向 `.exe` |
 
-Windows 的 `.env` 路径推荐正斜线，如 `OPPEN_SCAN_ROOTS=["C:/Users/Me/Projects","D:/Research"]`。`OPPEN_SKILL_ROOT` 应指向同时包含两个技能目录的父目录；技能无需随本仓库打包。未安装技能时项目发现仍可用，`get_skill_guide` 会返回明确错误。
+如果还想让 GPT 查看两个技能的使用说明，可以设置 `OPPEN_SKILL_ROOT`，指向同时包含 `oppen-project-steward` 和 `stepwise-r-project` 文件夹的位置。不填时会尝试在 `~/.codex/skills` 和 `~/.agents/skills` 中查找；没安装技能也能读取已有项目，只是无法提供技能说明。
 
-`config.example.json` 仅作旧 JSON 配置参考。`configure` 命令保留兼容性，但 `.env`/环境变量仍优先于写入的 JSON；避免在多个来源维护冲突值。HTTP 更换公网 origin 会使旧授权失效，需要重新连接。保留同一 state 目录与 origin 的重启会保留有效 OAuth 授权。
+`.env` 可能包含密钥，请保留在自己的电脑上。仓库已忽略 `.env`、`.runtime` 和 `config.local.json`，它们不会随普通 Git 提交上传。
 
-`.env`、`.runtime` 和 `config.local.json` 已忽略。将项目与 `.env` 存放在自己的私有目录；POSIX 的运行目录/凭据使用 0700/0600，Windows 的运行状态使用仅当前账户的受保护 DACL。Windows ACL 设置失败会使 HTTP 初始化失败。不要将 state 目录指向其他用途的共享目录。
+<details>
+<summary>其他设置与旧版本配置</summary>
 
-## 项目发现与文件访问契约
-
-Status: frozen
-
-默认扫描当前用户主目录；通过 `OPPEN_SCAN_ROOTS` 设置任意多个本机管理目录，通过 `OPPEN_EXCLUDE_ROOTS` 排除目录。扫描采用广度优先队列分批续扫，单批默认 90 秒或 500,000 个目录，未完成自动继续，完整一轮后每 300 秒开始下一轮。跳过系统、依赖、缓存和运行状态目录，远端只返回扫描计数及状态。目录权限不足或尚未扫完时报告 `partial`，不能据此宣称整机发现完成。远端不能改变扫描根。
-
-识别规则为管理文件中的独立版本标记行：
-
-| 管理类型 | 识别文件 | 版本 |
-| --- | --- | --- |
-| Oppen Project Steward | `.oppen-project-steward/registry.md` | v3 |
-| 旧版 Steward 布局 | `project.md` | legacy-layout |
-| Stepwise R Project | `project.md` | v2、v3 |
-
-这是入口识别，不代表通过 helper 完整验证。服务不运行 adopt、index、migration、R 分析或 shell 命令，不修改被访问项目。项目 ID 由真实绝对目录的 SHA-256 前 20 位确定；每次访问重新检查管理标记与根目录身份。发现时仅在本机遍历目录并读取管理标记，不读取普通数据文件正文。
-
-**对外采用固定治理白名单，默认拒绝其他文件。** 授权涵盖配置范围内所有当前及以后发现的受管理项目，但每个项目只开放下表内容：
-
-| 布局 | 可读文件 |
+| 设置 | 默认值与说明 |
 | --- | --- |
-| 当前 Steward | `.oppen-project-steward/registry.md`；同一命名空间中 `Memory/index.md`、`Attention/index.md` 及索引登记的 `entries/M-XXXX.md`、`entries/A-XXXX.md` |
-| 旧布局 Steward | `project.md`；根目录 `Memory`、`Attention` 中上述固定索引及已登记条目 |
-| R v3 | `project.md`；根目录 `Memory`、`Attention` 中上述固定索引及已登记条目 |
-| R v2 | 仅 `project.md`；旧版非结构化 Memory 默认关闭 |
+| `OPPEN_STATE_DIR` | `.runtime`，保存 HTTP 登录口令、OAuth 数据库和本机日志 |
+| `OPPEN_HOST` | `127.0.0.1`，只允许本机回环地址；端口范围为 1024–65535 |
+| `OPPEN_SCAN_INTERVAL` | `300` 秒，完成一轮后再次扫描的间隔，最小为 10 秒 |
+| `OPPEN_SCAN_SECONDS` | `90` 秒，每批扫描的时间上限 |
+| `OPPEN_MAX_SCAN_DIRS` | `500000`，每批最多扫描的文件夹数量 |
+| `OPPEN_EXTRA_REDIRECT_URIS` | `[]`，额外允许的 OAuth 回调地址，需要完整匹配，不支持通配符 |
+| `OPPEN_TUNNEL_PROFILE` | `oppen-steward`，官方 Tunnel 客户端中保存的连接配置名称 |
 
-Memory/Attention 索引必须符合对应技能的标记或标题，条目 ID 从索引读取；不存在、未登记或索引不合法时拒绝访问。索引里任意链接、Canonical/Result 注册表和文档正文中的引用**不会**授权目标路径。未登记条目和放在治理目录中的其他文件同样不开放。
+同一个设置出现在多处时，优先级是：命令行参数 > 系统环境变量 > `.env` > `config.local.json` > 默认值。新安装默认使用 stdio；旧 JSON 配置未指定连接方式时，仍使用 HTTP。
 
-**数据、源码、Results、Deliverables、全部 Audit（含 Runs、Contracts、Functions）、README、其他 Canonical 正文、运行状态和凭据均不开放。** 不因文件为 Markdown 或位于受管理项目中就放行。目录浏览只展示白名单文件及其必要父目录；搜索只读取白名单内容；`read_file`、伪造的 `fetch` ID 和 `/files/*` 下载统一受同一检查约束。没有远程扩大白名单的工具或配置项。
+旧版 `configure` 命令和 JSON 配置可以继续使用，示例见 `config.example.json`。建议日常统一在 `.env` 修改，避免多个文件互相覆盖。相对路径以配置文件所在文件夹为起点；通过 `--config /path/config.local.json` 指定其他位置时，也会读取该文件旁的 `.env`。`.env` 使用 UTF-8 编码，不执行 shell 命令，也不展开 `${VAR}`。
 
-这是文件范围限制，不是正文脱敏：治理文件自身的正文、标题及其中记载的数据路径等元信息会发送给 ChatGPT；如果在这些治理文件正文里写入数据内容，它也属于返回正文。服务不会跟随其中的链接、图片引用或执行代码，也不会另行上传项目数据。`get_skill_guide` 只读取两个固定技能的 SKILL.md。
+HTTP 模式未填写域名时，默认地址为 `http://127.0.0.1:8766`，仅适合本机使用。远程连接需要填写真实的 HTTPS 域名。
 
-按项目 ID 和相对路径读取，禁止绝对路径、`..`、NUL、反斜线和符号链接。macOS/Linux 使用逐组件 `openat` / `O_NOFOLLOW`；Windows 使用原生文件句柄，访问期间保留祖先句柄并拒绝写入/删除共享、reparse point（含目录联接）和硬链接。两条分支都检查根目录身份并拒绝特殊文件。Windows 当前限定普通本机磁盘目录，不支持 UNC、设备命名空间或云占位文件；同步软件或编辑器占用导致检查失败时拒绝访问。Windows 分支尚未实机验证。文件内容始终作为不可信内容返回。
+运行状态文件应放在自己的私有文件夹。macOS/Linux 使用 0700/0600 权限，Windows 使用只允许当前账户访问的 ACL；权限设置失败时，HTTP 服务会停止初始化。不要把 `OPPEN_STATE_DIR` 指向其他用途的共享文件夹。
 
-允许的治理文档每次最多读取 256 KiB，默认 64 KiB，offset/length 均为字节；`next_offset` 非空时继续。UTF-8 模式会替换跨块截断字符；`base64` 用于精确重建允许文档的字节，不会绕过白名单。返回大小、mtime 和块 SHA-256；跨块文件变化时应从头重读。
+</details>
 
-`search` 在白名单文档的名称和至多 256 KiB 的 UTF-8 正文中做字面匹配，默认最多 30 条结果，每次最多检查 10,000 个文件/10 秒；超限返回 `truncated`。`fetch` 读取搜索结果并提供引用与分页信息。HTTP 模式返回受认证保护的引用 URL；stdio 模式返回 `oppen-steward://` 标识符，用 `fetch`/`read_file` 继续读取，它不是浏览器下载链接。`/files/*` 要求 Bearer token，且再次验证治理白名单，不生成公开下载链接。
+## GPT 能看到哪些文件
 
-| MCP 工具 | 功能 |
+**只有项目治理文档。** 主要是项目入口、Memory 中的决策记录，以及 Attention 中的待处理事项。
+
+| 项目类型 | 可以读取的内容 |
 | --- | --- |
-| `list_projects` | 按名称、路径或技能筛选项目，返回项目根与治理入口、扫描计数 |
-| `refresh_projects` | 开始/继续本机发现，仅返回扫描计数与状态 |
-| `project_overview` | 读取治理 registry，定位可用的 Attention/Memory 索引 |
-| `list_files` | 分页浏览治理白名单中的目录和文件 |
-| `read_file` | 分块读取允许的治理文档 |
-| `search` / `fetch` | 跨项目检索及读取允许的治理文档 |
-| `get_skill_guide` | 读取两个固定的本机 SKILL.md |
+| 当前 Steward 项目 | `.oppen-project-steward/registry.md`，以及同一文件夹下 Memory、Attention 的索引和已登记条目 |
+| 旧版 Steward 项目 | `project.md`，以及项目根目录下 Memory、Attention 的索引和已登记条目 |
+| Stepwise R v3 项目 | `project.md`，以及项目根目录下 Memory、Attention 的索引和已登记条目 |
+| Stepwise R v2 项目 | 仅 `project.md` |
 
-## OAuth 与授权契约
+数据、源码、Results、Deliverables、全部 Audit、README、其他定义文档、运行文件和凭据都不开放。把一个文件放进项目文件夹，或在治理文档里链接到它，都不会让 GPT 获得读取权限；放在 Memory、Attention 中但没有登记的条目也不能读取。
 
+允许读取的文档中，正文、标题和记载的路径会发送给 GPT。因此，如果你把敏感数据直接写进了这些治理文档，GPT 也能看到那部分文字。服务不会继续读取其中链接的文件或图片。
 
-Status: frozen
+连接后，GPT 可以访问你配置范围内所有已发现项目的治理文档，包括以后新增的项目。如果不想分享某个项目，在本机 `.env` 中将它排除即可；GPT 无法自行扩大访问范围。
 
-本节适用于 HTTP 模式。stdio 模式没有应用层 OAuth 或登录页，工具声明 `noauth`；本机访问由启动进程的操作系统账户控制，连接 ChatGPT 时还依赖官方 Tunnel 的工作区权限与 runtime key。不要使用无认证的通用网络桥接器转发 stdio。
+服务会定期查找新项目。文件夹较多或部分目录没有访问权限时，扫描状态可能显示 `partial`。这时可以稍后再查看，或检查配置路径及文件权限。发现项目只说明找到了它的管理文件，不会替你验证、迁移或修改项目。
 
-HTTP 模式基于官方 MCP SDK 的授权码流程，使用 S256 PKCE、精确回调匹配、固定 issuer、`resource` 绑定、scope 检查和 Bearer 验证。只支持 `governance:read`。每个工具都显式声明 OAuth2 和该 scope，并在 `_meta.securitySchemes` 中提供兼容声明；401/403 认证 challenge 同时给出所需 scope。提供 OAuth Authorization Server Metadata 与 Protected Resource Metadata，所有授权成功/回调错误响应包含 RFC 9207 `iss`。
+<details>
+<summary>开发者参考：识别与读取规则</summary>
 
-授权页通过 10 分钟有效的浏览器 Cookie、CSRF token、Origin 校验和本人访问口令保护；页面不允许嵌入 iframe。授权码有效 120 秒、只能兑换一次。访问令牌有效 1 小时，刷新令牌有效 30 天；刷新时轮换令牌，重复使用旧刷新令牌会撤销该授权链。SQLite 事务负责一次性消费与新令牌写入。Bearer/刷新令牌只以 SHA-256 索引保存，服务重启后保持有效；issuer 或服务权限范围改变会撤销旧客户端、授权码和令牌。从历史广泛访问范围升级到 `governance:read` 会撤销旧授权，本机登录口令保持不变。
+Steward v3 通过 `.oppen-project-steward/registry.md` 识别；旧布局 Steward 和 Stepwise R v2/v3 通过 `project.md` 识别，文件中需要有对应的独立版本标记行。项目 ID 根据真实绝对路径的 SHA-256 前 20 位生成，每次访问都会重新检查标记和根目录身份。
 
-页面采用 `Referrer-Policy: same-origin`：同源表单保留浏览器生成的 Origin，跨站导航不传 Referer。不能改为 `no-referrer`，该策略会使原生表单 POST 的 Origin 变成 `null`，导致合法授权被拒绝。服务仍拒绝 `null` 和非本服务来源，保留 Cookie、CSRF 和口令校验。该行为依据 [Fetch 标准的 Origin 请求头规则](https://fetch.spec.whatwg.org/#append-a-request-origin-header)。
+Memory、Attention 的索引分别为 `index.md`，条目路径为 `entries/M-XXXX.md`、`entries/A-XXXX.md`。索引需符合对应技能的格式，条目需在索引中登记。R v2 的旧式 Memory 不开放。
 
-授权页的 CSP `form-action` 仅允许同源提交及本次已验证的精确 OAuth 回调路径，覆盖浏览器对表单 303 回调的检查；错误口令重试页沿用同一规则。中间件不重复添加另一条会拦截合法回调的 CSP，其他页面采用默认同源策略，所有页面保持禁止 iframe 嵌入。
+所有浏览、搜索、读取、`fetch` 和 `/files/*` 都遵守同一套允许文件列表。扫描只读取管理标记，跳过系统、依赖、缓存和运行状态目录；分批扫描未完成时会自动继续。远端扫描诊断包含计数和状态，不包含无关的失败目录路径。
 
-动态注册只接受 ChatGPT 回调或管理员在本机配置的精确回调。DCR 注册不授予文件权限，必须经过本人登录及同意。支持 public client、client_secret_post、client_secret_basic。单进程最多 1,000 个注册客户端；认证端点每分钟最多 60 次，授权页 POST 每分钟最多 10 次；请求体上限 1 MiB。适合单所有者使用，不提供多租户隔离。
+读取只接受项目相对路径，拒绝路径穿越、绝对路径、NUL、反斜线、盘符及替代数据流写法。macOS/Linux 逐层使用文件描述符和 `O_NOFOLLOW`；Windows 使用原生句柄并在读取期间锁定祖先目录。符号链接、硬链接、被替换的根目录和特殊文件均被拒绝。Windows 目前只支持普通本地文件夹，不支持网络共享、目录联接或云端占位文件；同步软件或编辑器占用也可能导致读取失败。
+
+文件默认每次读取 64 KiB，最多 256 KiB，offset/length 以字节计。返回 `next_offset` 时可继续读取；UTF-8 分块可能替换被截断的字符，需要精确字节时使用 base64。结果包含大小、修改时间和块 SHA-256；分块期间文件变化时应重新读取。文档内容始终视为不可信输入。
+
+搜索匹配文档名称和不超过 256 KiB 的正文，默认最多返回 30 条，每次最多检查 10,000 个文件或运行 10 秒；超限时返回 `truncated`。HTTP 模式的文件链接需要 Bearer token，不能作为公开下载链接。stdio 返回的 `oppen-steward://` 是文件标识，可用 `fetch` 或 `read_file` 读取。
+
+| MCP 工具 | 用途 |
+| --- | --- |
+| `list_projects` | 查找项目，支持按名称、路径或技能筛选 |
+| `refresh_projects` | 开始或继续扫描 |
+| `project_overview` | 查看项目入口和 Memory、Attention 的位置 |
+| `list_files` | 浏览允许读取的文件 |
+| `read_file` | 分块读取文档 |
+| `search` / `fetch` | 搜索并读取文档 |
+| `get_skill_guide` | 查看两个技能的本机 SKILL.md |
+
+</details>
+
+## 授权与口令
+
+**Tunnel 模式**使用 OpenAI 的工作区权限和运行密钥，不会弹出本项目的口令登录页。
+
+**HTTP 模式**会先要求你输入 `.runtime/owner-access.txt` 中的口令，再确认授权。这个口令由首次 `setup` 自动生成，重复运行 `setup` 不会更换口令，也不会让已有授权失效。
+
+普通重启会保留授权。如果更换了公网域名或使用新的运行状态文件夹，需要在 ChatGPT 中重新连接。
+
+想取消全部授权：
 
 ```sh
-# 撤销所有客户端和令牌，ChatGPT 需要重新连接
 uv run python run.py revoke-all
-# 更换本机登录口令，同时撤销所有 OAuth 授权（服务读取最新哈希）
+```
+
+想换一个新口令：
+
+```sh
 uv run python run.py rotate-password
 ```
 
-## 验证与贡献
+更换口令也会撤销已有授权，新口令仍保存在同一个本机文件中。这套授权适合自己使用，不提供多个用户之间的项目隔离。
+
+<details>
+<summary>开发者参考：OAuth 协议与浏览器设置</summary>
+
+HTTP 使用 MCP SDK 的授权码流程、S256 PKCE、精确回调匹配，以及固定的 issuer/resource。权限范围仅为 `governance:read`，工具描述及 `_meta.securitySchemes` 均声明 OAuth2 和所需 scope；认证 challenge 也返回 scope。服务提供 OAuth Authorization Server Metadata、Protected Resource Metadata，并在授权回调中包含 RFC 9207 `iss`。
+
+授权页检查本机口令、Cookie、CSRF token 和 Origin，禁止 iframe 嵌入。浏览器会话有效 10 分钟，授权码有效 120 秒且只能兑换一次。访问令牌有效 1 小时，刷新令牌有效 30 天；刷新时轮换令牌，旧刷新令牌被重复使用时撤销整条授权链。SQLite 事务保证一次性消费。令牌以 SHA-256 索引保存；issuer 或 scope 改变时撤销旧授权，从历史广泛访问权限升级为治理只读时也会撤销旧授权，保留本机口令。
+
+授权页使用 `Referrer-Policy: same-origin`。改为 `no-referrer` 会让原生表单 POST 的 Origin 变成 `null`，触发来源检查。CSP 的 `form-action` 允许同源提交和已验证的精确回调，避免浏览器阻止表单后的 303 跳转；其他页面默认只允许同源提交。相关规则见 [Fetch 标准](https://fetch.spec.whatwg.org/#append-a-request-origin-header)。
+
+动态注册仅接受 ChatGPT 回调和本机额外配置的精确回调，注册后仍需本人登录同意。支持 public client、client_secret_post 和 client_secret_basic；单进程最多 1,000 个客户端，认证端点每分钟最多 60 次，授权页 POST 每分钟最多 10 次，请求体上限为 1 MiB。
+
+stdio 工具声明 `noauth`，其访问权限依赖本机账户和官方 Tunnel 认证。请勿用无认证的网络转发工具直接公开 stdio。
+
+</details>
+
+## 参与开发
+
+欢迎提交问题和改进。如果要在本机运行测试：
 
 ```sh
 uv sync --locked --dev
@@ -169,10 +242,8 @@ uv run ruff check .
 uv run pytest -q
 ```
 
-测试覆盖配置优先级、UTF-8 路径、两种传输的权限声明、真实 stdio 子进程、治理白名单、路径越界、索引失效、OAuth 重放/刷新/撤销和授权后的 MCP 调用。Windows 专用测试包括目录联接拒绝、祖先句柄锁定和 ACL；在 macOS 上会明确跳过。可选真实浏览器回归的安装与运行方法见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+测试使用临时项目和测试口令。浏览器测试等详细步骤见 [贡献指南](CONTRIBUTING.md)，安全问题的反馈方式见 [SECURITY.md](SECURITY.md)。
 
-**验证状态：仅 macOS 已测试；Windows 和 Linux 未验证。** 仓库包含三平台 CI 配置，但未将尚未运行的 GitHub Actions 视为测试通过。
+本项目本身也使用 Oppen Project Steward 管理，可在 [项目登记表](.oppen-project-steward/registry.md) 中查看。
 
-本项目使用 Oppen Project Steward 管理。[治理 registry](.oppen-project-steward/registry.md) 注册 README 的当前契约章节；实现与测试分别拥有代码和可执行验证。当前机器证据位于 `.oppen-project-steward/Audit/Runs/verification/current/`，高风险契约审计位于 `.oppen-project-steward/Audit/Contracts/`。Audit 不通过 MCP 暴露。
-
-贡献方式见 [CONTRIBUTING.md](CONTRIBUTING.md)，安全反馈见 [SECURITY.md](SECURITY.md)。本仓库代码采用 [MIT License](LICENSE)。两个外部技能、MCP SDK 与官方 Tunnel 客户端各自适用其许可证；本仓库不重新分发它们的源码或二进制。内部 Python 模块名 `oppenproject` 保留兼容性，公开项目名为 OppenSteward-MCP。
+本仓库采用 [MIT License](LICENSE)。外部技能、MCP SDK 和 Tunnel 客户端各自遵循其许可证。
