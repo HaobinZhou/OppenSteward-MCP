@@ -6,6 +6,8 @@ Only local drive paths are accepted; UNC, device namespaces and reparse points
 (including junctions and cloud placeholders) fail closed.
 """
 
+import ctypes
+import errno
 import msvcrt
 import os
 import re
@@ -20,16 +22,23 @@ import win32file
 import win32security
 
 
-def _open(path: Path, *, directory: bool, write=False):
-    handle = win32file.CreateFile(
-        str(path),
-        win32con.GENERIC_READ | (win32con.GENERIC_WRITE if write else 0),
-        win32con.FILE_SHARE_READ if not write else 0,
-        None,
-        win32con.OPEN_ALWAYS if write else win32con.OPEN_EXISTING,
-        win32file.FILE_FLAG_OPEN_REPARSE_POINT | win32con.FILE_FLAG_BACKUP_SEMANTICS,
-        None,
-    )
+def _open(path: Path, *, directory: bool, write=False, rename=False):
+    try:
+        handle = win32file.CreateFile(
+            str(path),
+            win32con.GENERIC_READ
+            | (win32con.GENERIC_WRITE if write else 0)
+            | (win32con.DELETE if rename else 0),
+            win32con.FILE_SHARE_READ if not (write or rename) else 0,
+            None,
+            win32con.OPEN_ALWAYS if write else win32con.OPEN_EXISTING,
+            win32file.FILE_FLAG_OPEN_REPARSE_POINT | win32con.FILE_FLAG_BACKUP_SEMANTICS,
+            None,
+        )
+    except pywintypes.error as error:
+        if error.winerror in {2, 3}:
+            raise FileNotFoundError(errno.ENOENT, "Windows file or directory is missing") from error
+        raise OSError(errno.EACCES, "Windows file handle access denied") from error
     try:
         info = win32file.GetFileInformationByHandle(handle)
         attributes, links = info[0], info[7]
@@ -50,6 +59,62 @@ def _open(path: Path, *, directory: bool, write=False):
     finally:
         if handle is not None:
             handle.Close()
+
+
+def rename_in_place(source: Path, name: str, *, replace: bool, expected):
+    """Use the source handle's parent, keeping every directory locked against replacement.
+
+    MoveFileEx (os.rename/replace) reopens the target directory for writing, which
+    conflicts with our held directory handles. Native FileRenameInformation with
+    a simple name and NULL RootDirectory is a rename within the same parent.
+    https://learn.microsoft.com/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information
+    """
+    if not name or any(c in name for c in "/\\:\0"):
+        raise ValueError("Rename requires one filename")
+
+    class RenameInfo(ctypes.Structure):
+        _fields_ = [
+            ("ReplaceIfExists", ctypes.c_ubyte),
+            ("RootDirectory", ctypes.c_void_p),
+            ("FileNameLength", ctypes.c_ulong),
+            ("FileName", ctypes.c_wchar * 1),
+        ]
+
+    class IOStatus(ctypes.Structure):
+        _fields_ = [("StatusOrPointer", ctypes.c_void_p), ("Information", ctypes.c_size_t)]
+
+    encoded = name.encode("utf-16-le")
+    buffer = ctypes.create_string_buffer(ctypes.sizeof(RenameInfo) + len(encoded))
+    info = RenameInfo.from_buffer(buffer)
+    info.ReplaceIfExists = bool(replace)
+    info.RootDirectory = None
+    info.FileNameLength = len(encoded)
+    ctypes.memmove(ctypes.addressof(buffer) + RenameInfo.FileName.offset, encoded, len(encoded))
+    native = ctypes.WinDLL("ntdll")
+    rename_file = native.NtSetInformationFile
+    rename_file.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(IOStatus),
+        ctypes.c_void_p,
+        ctypes.c_ulong,
+        ctypes.c_int,
+    ]
+    rename_file.restype = ctypes.c_long
+    fd = _open(source, directory=False, rename=True)
+    try:
+        actual = os.fstat(fd)
+        fields = ("st_dev", "st_ino", "st_size", "st_mtime_ns")
+        if any(getattr(actual, f) != getattr(expected, f) for f in fields):
+            raise OSError("Temporary Discussion file was replaced or modified")
+        result = rename_file(
+            msvcrt.get_osfhandle(fd), ctypes.byref(IOStatus()), buffer, len(buffer), 10
+        )  # FileRenameInformation
+        if result < 0:
+            native.RtlNtStatusToDosError.argtypes = [ctypes.c_long]
+            native.RtlNtStatusToDosError.restype = ctypes.c_ulong
+            raise ctypes.WinError(native.RtlNtStatusToDosError(result))
+    finally:
+        os.close(fd)
 
 
 @contextmanager

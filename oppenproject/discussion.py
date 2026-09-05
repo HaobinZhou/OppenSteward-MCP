@@ -112,18 +112,17 @@ class Directory:
                 output.write(data)
                 output.flush()
                 os.fsync(output.fileno())
+                temporary_stat = os.fstat(output.fileno())
             current = self.read(name, 2 * 1024 * 1024 if name == "index.md" else MAX_BYTES)
             if (sha(current[0]) if current else None) != expected:
                 raise ValueError("Discussion changed since read; read again before editing")
-            target = self.path / name if os.name == "nt" else name
-            if expected is None:
-                if os.name == "nt":
-                    os.rename(temp_path, target)  # Windows rename refuses an existing target.
-                else:
-                    os.link(temporary, name, src_dir_fd=self.fd, dst_dir_fd=self.fd, follow_symlinks=False)
-                    os.unlink(temporary, dir_fd=self.fd)
-            elif os.name == "nt":
-                os.replace(temp_path, target)
+            if os.name == "nt":
+                from .windows_fs import rename_in_place
+
+                rename_in_place(temp_path, name, replace=expected is not None, expected=temporary_stat)
+            elif expected is None:
+                os.link(temporary, name, src_dir_fd=self.fd, dst_dir_fd=self.fd, follow_symlinks=False)
+                os.unlink(temporary, dir_fd=self.fd)
             else:
                 os.replace(temporary, name, src_dir_fd=self.fd, dst_dir_fd=self.fd)
             if os.name != "nt":
