@@ -7,7 +7,9 @@ OAuth database, project data or runtime key.
 
 The current behavioral definitions are registered README sections; update the
 existing owner when changing a contract. The governance-only allowlist applies
-to every transport and read surface. Add regression coverage for a changed
+to every transport and governance read surface. Discussion tools have separate
+read/write scopes and may create or edit only numbered files and their index
+inside the current skill layout's Discussion directory. Add regression coverage for a changed
 authorization, path or transport boundary. External skill sources are not
 vendored; use your own installed skill to refresh Steward audits and registries
 locally. Keep `.oppen-project-steward/` out of commits; it is ignored local state.

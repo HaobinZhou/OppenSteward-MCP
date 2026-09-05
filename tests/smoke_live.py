@@ -110,6 +110,9 @@ async def main(base_url, settings=None):
                         projects = result.structuredContent["projects"]
                         assert projects, "Discovery still running; retry after the first batch"
                         pid = projects[0]["id"]
+                        if settings.discussion_mode != "off":
+                            denied = await session.call_tool("list_discussions", {"project_id": pid})
+                            assert denied.isError and "mcp/www_authenticate" in denied.meta
                         result = await session.call_tool(
                             "read_file", {"project_id": pid, "path": projects[0]["registry"]}
                         )

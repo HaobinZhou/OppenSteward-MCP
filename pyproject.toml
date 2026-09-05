@@ -1,7 +1,7 @@
 [project]
 name = "oppen-steward-mcp"
-version = "0.2.0"
-description = "Governance-only MCP for Steward and Stepwise projects, with OAuth HTTP and Secure MCP Tunnel"
+version = "0.3.0"
+description = "Project governance and writable discussions, with OAuth HTTP and Secure MCP Tunnel"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12"

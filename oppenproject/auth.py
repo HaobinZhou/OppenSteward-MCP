@@ -29,6 +29,28 @@ from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
 from .config import APP_NAME, Settings
 
 SCOPE = "governance:read"
+DISCUSSION_READ = "discussion:read"
+DISCUSSION_WRITE = "discussion:write"
+
+
+def supported_scopes(settings):
+    return (
+        [SCOPE]
+        + ([DISCUSSION_READ] if settings.discussion_mode != "off" else [])
+        + ([DISCUSSION_WRITE] if settings.discussion_mode == "write" else [])
+    )
+
+
+def valid_scopes(scopes, settings):
+    selected = set(scopes)
+    return (
+        len(selected) == len(scopes)
+        and SCOPE in selected
+        and selected <= set(supported_scopes(settings))
+        and (DISCUSSION_WRITE not in selected or DISCUSSION_READ in selected)
+    )
+
+
 ACCESS_TTL = 3600
 REFRESH_TTL = 30 * 86400
 COOKIE = "oppen_authorize"
@@ -160,8 +182,8 @@ class OAuthProvider:
     async def authorize(self, client, params: AuthorizationParams):
         if params.resource != self.settings.resource:
             raise AuthorizeError("invalid_request", "resource must equal the advertised MCP resource")
-        if params.scopes != [SCOPE]:
-            raise AuthorizeError("invalid_scope", f"Only {SCOPE} is supported")
+        if not valid_scopes(params.scopes, self.settings):
+            raise AuthorizeError("invalid_scope", "Request supported scopes; writing also requires reading")
         if not re.fullmatch(r"[A-Za-z0-9_-]{43}", params.code_challenge):
             raise AuthorizeError("invalid_request", "Invalid S256 PKCE challenge")
         if not self.redirect_allowed(params.redirect_uri):
@@ -220,6 +242,8 @@ class OAuthProvider:
         ):
             return JSONResponse({"error": "Invalid authorization session"}, status_code=403)
         params = AuthorizationParams.model_validate(data["params"])
+        if not valid_scopes(params.scopes, self.settings):
+            return JSONResponse({"error": "Permissions changed; reconnect from ChatGPT"}, 400)
         if form.get("decision") == "deny":
             self.store.take("pending", digest(transaction))
             return RedirectResponse(
@@ -269,6 +293,22 @@ class OAuthProvider:
     def consent_html(self, data, transaction, csrf, error=""):
         esc = html.escape
         redirect = data["params"]["redirect_uri"]
+        scopes = data["params"]["scopes"]
+        discussion = ""
+        action = "授权读取项目治理文件"
+        if DISCUSSION_READ in scopes:
+            discussion = (
+                "<p>同时允许读取当前 Steward 的 .oppen-project-steward/Discussion/ "
+                "和 Stepwise R v3 的 Discussion/ 中的讨论文档及索引。"
+                "讨论正文会提供给 ChatGPT，包括你在里面保存的草稿或代码。</p>"
+            )
+            action = "授权读取治理与讨论文件"
+        if DISCUSSION_WRITE in scopes:
+            discussion += (
+                "<p><strong>允许在这些 Discussion 目录中新建和编辑讨论文档，并更新索引。</strong>"
+                "不允许删除、重命名、修改其他文件或执行代码。保存讨论不会自动执行其中的建议。</p>"
+            )
+            action = "授权读取治理文件并新建、编辑讨论"
         return f'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>授权 {APP_NAME}</title>
 <style>body{{font:16px system-ui;background:#f3f4f6;color:#17212d;margin:0;padding:8vh 20px}}
@@ -277,18 +317,19 @@ h1{{font-size:26px}}p{{line-height:1.6;overflow-wrap:anywhere}}small{{color:#536
 input{{box-sizing:border-box;width:100%;padding:12px;border:1px solid #9daab8;border-radius:8px}}
 button{{padding:12px 20px;margin-top:20px;border:0;border-radius:8px;cursor:pointer}}
 button[value=allow]{{background:#164e63;color:white}}.error{{color:#b42318}}</style></head>
-<body><main><small>{APP_NAME} · 项目治理</small><h1>授权读取项目治理文件</h1>
+<body><main><small>{APP_NAME} · 项目治理</small><h1>{action}</h1>
 <p>客户端：<strong>{esc(data["client_name"])}</strong></p>
 <p>授权后，ChatGPT 可发现受管理项目，只能读取治理索引、Memory 和 Attention 的索引及已登记条目。
-此范围也适用于之后自动发现的项目。权限：<code>{SCOPE}</code>。</p>
+此范围也适用于之后自动发现的项目。权限：<code>{esc(" ".join(scopes))}</code>。</p>
 <p>数据、源码、Results、Deliverables、Audit、README 和其他 Canonical 正文不开放。
 治理文档中的链接不会授予目标文件的访问权限。旧版 R v2 项目只开放 project.md。</p>
-<p>治理文档本身的正文会提供给 ChatGPT。不提供修改、删除或执行命令。</p>
+<p>治理文档本身的正文会提供给 ChatGPT，治理索引、Memory 和 Attention 保持只读。</p>
+{discussion}
 <p><small>授权回调：{esc(redirect)}</small></p><p class="error">{esc(error)}</p>
 <form method="post" action="/consent"><input type="hidden" name="transaction" value="{esc(transaction)}">
 <input type="hidden" name="csrf" value="{esc(csrf)}"><label for="password">本机生成的访问口令</label>
 <input id="password" type="password" name="password" autocomplete="current-password" maxlength="256">
-<button name="decision" value="allow">登录并授权治理文件只读</button>
+<button name="decision" value="allow">登录并{action}</button>
 <button name="decision" value="deny">取消</button></form></main></body></html>'''
 
     async def load_authorization_code(self, client, authorization_code):
@@ -339,7 +380,9 @@ button[value=allow]{{background:#164e63;color:white}}.error{{color:#b42318}}</st
         )
 
     async def exchange_authorization_code(self, client, authorization_code):
-        if authorization_code.resource != self.settings.resource:
+        if authorization_code.resource != self.settings.resource or not valid_scopes(
+            authorization_code.scopes, self.settings
+        ):
             raise TokenError("invalid_grant", "Wrong resource")
         return self.issue(
             client.client_id,
@@ -354,7 +397,7 @@ button[value=allow]{{background:#164e63;color:white}}.error{{color:#b42318}}</st
             not data
             or data["issuer"] != self.settings.public_url
             or data["resource"] != self.settings.resource
-            or data["scopes"] != [SCOPE]
+            or not valid_scopes(data["scopes"], self.settings)
             or data["expires_at"] <= time.time()
             or self.store.get("revoked", data["grant"])
         ):
@@ -380,7 +423,7 @@ button[value=allow]{{background:#164e63;color:white}}.error{{color:#b42318}}</st
 
     async def exchange_refresh_token(self, client, refresh_token, scopes):
         data = self.valid_token("refresh", refresh_token.token)
-        if not data or scopes != [SCOPE]:
+        if not data or not valid_scopes(scopes, self.settings) or not set(scopes) <= set(data["scopes"]):
             raise TokenError("invalid_grant", "Invalid refresh token or scopes")
         return self.issue(
             client.client_id,

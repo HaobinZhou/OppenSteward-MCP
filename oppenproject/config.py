@@ -27,6 +27,7 @@ ENV_FIELDS = {
     "TUNNEL_ID": "tunnel_id",
     "TUNNEL_PROFILE": "tunnel_profile",
     "TUNNEL_CLIENT": "tunnel_client",
+    "DISCUSSION_MODE": "discussion_mode",
 }
 INTEGER_FIELDS = {"port", "scan_interval", "scan_seconds", "max_scan_dirs"}
 LIST_FIELDS = {"scan_roots", "exclude_roots", "extra_redirect_uris"}
@@ -55,10 +56,13 @@ class Settings:
     tunnel_id: str = ""
     tunnel_profile: str = "oppen-steward"
     tunnel_client: str = "tunnel-client"
+    discussion_mode: str = "off"
 
     def __post_init__(self):
         if self.transport not in {"http", "stdio"}:
             raise ValueError("OPPEN_TRANSPORT must be http or stdio")
+        if self.discussion_mode not in {"off", "read", "write"}:
+            raise ValueError("OPPEN_DISCUSSION_MODE must be off, read or write")
         self.public_url = self.public_url.rstrip("/")
         u = urlsplit(self.public_url)
         local = u.scheme == "http" and u.hostname in {"localhost", "127.0.0.1", "::1"}

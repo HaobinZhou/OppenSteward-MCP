@@ -12,6 +12,8 @@ const configArg = args.find(arg => arg.startsWith('--config='));
 const config = JSON.parse(fs.readFileSync(configArg ? configArg.slice('--config='.length) :
   path.join(root, 'config.local.json')));
 const issuer = config.public_url;
+const scopes = config.discussion_mode === 'write'
+  ? 'governance:read discussion:read discussion:write' : 'governance:read';
 const callback = config.browser_test_callback || 'https://chatgpt.com/connector_platform_oauth_redirect';
 const verifier = crypto.randomBytes(48).toString('base64url');
 const challenge = crypto.createHash('sha256').update(verifier).digest('base64url');
@@ -32,16 +34,19 @@ let cspBlocked = false;
     let response = await context.request.post(issuer + '/register', { data: {
       client_name: 'OppenSteward-MCP browser verification', redirect_uris: [callback],
       token_endpoint_auth_method: 'none', grant_types: ['authorization_code', 'refresh_token'],
-      response_types: ['code'], scope: 'governance:read',
+      response_types: ['code'], scope: scopes,
     }});
     assert.equal(response.status(), 201, 'DCR must succeed');
     credentials = await response.json();
     const query = new URLSearchParams({ client_id: credentials.client_id, response_type: 'code',
-      redirect_uri: callback, scope: 'governance:read', state: 'isolated-browser-verification',
+      redirect_uri: callback, scope: scopes, state: 'isolated-browser-verification',
       resource: issuer + '/mcp', code_challenge: challenge, code_challenge_method: 'S256' });
     phase = 'consent page';
     const consent = await page.goto(issuer + '/authorize?' + query);
     const policy = consent.headers()['referrer-policy'];
+    if (config.discussion_mode === 'write') {
+      assert((await page.locator('body').innerText()).includes('新建和编辑讨论文档'));
+    }
     const expectError = args.includes('--expect-origin-error');
     const invalidPassword = args.includes('--invalid-password');
     if (!expectError) {

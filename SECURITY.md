@@ -3,7 +3,9 @@
 The authoritative exposure and authentication rules are the registered
 [README contracts](README.md#gpt-能看到哪些文件). This server is intended for
 one local owner. Governance document bodies can contain sensitive information;
-the file allowlist does not redact their contents.
+the file allowlist does not redact their contents. The optional Discussion tools
+also expose their text bodies. Writing is limited to Discussion documents and
+their index, requires separate authorization, and never executes document text.
 
 For a suspected authorization bypass or unintended file disclosure, use the
 repository's private vulnerability reporting feature if enabled. If no private

@@ -1,14 +1,15 @@
 # OppenSteward-MCP
 
-在 ChatGPT 网页版里查看你电脑上的项目说明、决策记录和待处理事项。
+在 ChatGPT 网页版里查看你电脑上的项目说明、决策记录和待处理事项，也可以把讨论保存回项目。
 
 OppenSteward-MCP 会找到由 **Oppen Project Steward** 或 **Stepwise R Project** 管理的项目，让 GPT 帮你了解项目进展、查找过去的决定、汇总需要关注的问题。比如，你可以直接问：
 
 - “我有哪些项目还有待处理事项？”
 - “这个项目当时为什么选择了这套方案？”
 - “帮我找一下几个项目里关于部署方式的决策记录。”
+- “把刚才讨论的方案保存到这个项目，下次接着聊。”
 
-它只提供项目的治理文档，数据、源码和分析结果不会通过这个 MCP 传给 GPT，也不能用它修改项目或运行代码。
+默认只开放项目治理文档。开启讨论功能后，GPT 还可以读取、新建和编辑 `Discussion` 中的讨论文件。数据文件、源码文件和分析结果仍不开放，保存讨论也不会运行代码或执行里面的建议。
 
 支持 Windows、macOS 和 Linux。目前只在 macOS 上测试过，Windows 和 Linux 还没实测。
 
@@ -116,6 +117,7 @@ OPPEN_EXCLUDE_ROOTS=["~/Projects/private"]
 | `OPPEN_TRANSPORT` | Tunnel 使用 `stdio`，域名转发使用 `http`；两份示例已经分别填好 |
 | `OPPEN_SCAN_ROOTS` | 指定你的项目所在文件夹 |
 | `OPPEN_EXCLUDE_ROOTS` | 排除不想分享的文件夹及其子文件夹 |
+| `OPPEN_DISCUSSION_MODE` | 默认 `off`；`read` 开放讨论读取，`write` 同时允许新建和编辑讨论 |
 | `OPPEN_PUBLIC_URL` | HTTP 模式下填写自己的 HTTPS 域名 |
 | `OPPEN_PORT` | 默认 `8766`；端口被占用时可以更换，并同步修改转发规则 |
 | `OPPEN_TUNNEL_ID` | 填入 OpenAI Platform 中的 Tunnel ID |
@@ -131,7 +133,7 @@ OPPEN_EXCLUDE_ROOTS=["~/Projects/private"]
 
 | 设置 | 默认值与说明 |
 | --- | --- |
-| `OPPEN_STATE_DIR` | `.runtime`，保存 HTTP 登录口令、OAuth 数据库和本机日志 |
+| `OPPEN_STATE_DIR` | `.runtime`，保存登录口令、OAuth 数据库、讨论编号与重试记录，以及本机日志 |
 | `OPPEN_HOST` | `127.0.0.1`，只允许本机回环地址；端口范围为 1024–65535 |
 | `OPPEN_SCAN_INTERVAL` | `300` 秒，完成一轮后再次扫描的间隔，最小为 10 秒 |
 | `OPPEN_SCAN_SECONDS` | `90` 秒，每批扫描的时间上限 |
@@ -151,7 +153,7 @@ HTTP 模式未填写域名时，默认地址为 `http://127.0.0.1:8766`，仅适
 
 ## GPT 能看到哪些文件
 
-**只有项目治理文档。** 主要是项目入口、Memory 中的决策记录，以及 Attention 中的待处理事项。
+**默认是项目治理文档。** 主要是项目入口、Memory 中的决策记录，以及 Attention 中的待处理事项。讨论功能需要在本机另行开启，具体范围见下面的“保存和继续讨论”。
 
 | 项目类型 | 可以读取的内容 |
 | --- | --- |
@@ -175,7 +177,7 @@ Steward v3 通过 `.oppen-project-steward/registry.md` 识别；旧布局 Stewar
 
 Memory、Attention 的索引分别为 `index.md`，条目路径为 `entries/M-XXXX.md`、`entries/A-XXXX.md`。索引需符合对应技能的格式，条目需在索引中登记。R v2 的旧式 Memory 不开放。
 
-所有浏览、搜索、读取、`fetch` 和 `/files/*` 都遵守同一套允许文件列表。扫描只读取管理标记，跳过系统、依赖、缓存和运行状态目录；分批扫描未完成时会自动继续。远端扫描诊断包含计数和状态，不包含无关的失败目录路径。
+`list_files`、`read_file`、`search`、`fetch` 和 `/files/*` 都遵守同一套治理文件列表。讨论只能通过专门的 Discussion 工具访问，不会混入原有读取入口。扫描只读取管理标记，跳过系统、依赖、缓存和运行状态目录；分批扫描未完成时会自动继续。远端扫描诊断包含计数和状态，不包含无关的失败目录路径。
 
 读取只接受项目相对路径，拒绝路径穿越、绝对路径、NUL、反斜线、盘符及替代数据流写法。macOS/Linux 逐层使用文件描述符和 `O_NOFOLLOW`；Windows 使用原生句柄并在读取期间锁定祖先目录。符号链接、硬链接、被替换的根目录和特殊文件均被拒绝。Windows 目前只支持普通本地文件夹，不支持网络共享、目录联接或云端占位文件；同步软件或编辑器占用也可能导致读取失败。
 
@@ -192,6 +194,46 @@ Memory、Attention 的索引分别为 `index.md`，条目路径为 `entries/M-XX
 | `read_file` | 分块读取文档 |
 | `search` / `fetch` | 搜索并读取文档 |
 | `get_skill_guide` | 查看两个技能的本机 SKILL.md |
+| `list_discussions` / `read_discussion` | 查找和读取讨论，包括编辑所需的版本标识 |
+| `create_discussion` / `edit_discussion` | 新建或编辑讨论，由 MCP 更新索引；仅在 `write` 模式下提供 |
+
+</details>
+
+## 保存和继续讨论
+
+想把网页里的讨论留给下次使用，或让本机 Codex 接着阅读，可以在 `.env` 中加入：
+
+```dotenv
+OPPEN_DISCUSSION_MODE=write
+```
+
+重启服务后，在 ChatGPT 中刷新工具并重新授权。HTTP 授权页会明确列出讨论的读取、新建和编辑权限；原来的只读授权不会自动获得这些权限。如果旧连接一直不显示新权限，可以移除连接，再用原来的 `/mcp` 地址添加一次。Tunnel 用户重启 `tunnel run` 并刷新工具即可，访问权限由本机配置和 Tunnel 认证共同控制。
+
+之后可以直接说：“把这段讨论保存到某某项目”，或“打开之前关于部署的讨论，补上刚才的结论”。GPT 会先读取已有内容再编辑；文件在此期间被别人改过，MCP 会要求重新读取，避免用旧内容覆盖新修改。
+
+| 项目类型 | 保存位置 |
+| --- | --- |
+| 当前 Steward 项目 | `.oppen-project-steward/Discussion/` |
+| Stepwise R v3 项目 | 项目根目录的 `Discussion/` |
+
+文件会命名为 `D-000001__部署方式讨论.md`，后面的编号依次递增。继续同一话题时编辑原文件，MCP 会同步维护 `index.md` 中的链接、简介和更新时间。正文可以自由写，不需要套模板，也不必把讨论登记为正式决定。
+
+这一版支持新建和编辑，不提供删除或重命名。治理索引、Memory、Attention 和其他项目文件保持只读或不可访问。旧版项目需要先在本机升级管理布局，才会开放讨论功能。
+
+讨论正文会发送给 GPT，包括你主动写进去的草稿、代码或数据片段；服务不会读取其中链接的文件。保存本身不会执行代码、修改项目实现，也不会自动提交或推送 Git。讨论是否随你自己的 Git 提交发布，取决于该项目已有的忽略规则，MCP 不会修改这些规则。
+
+只想让 GPT 看已有讨论时，将配置改成 `read`；改回 `off` 可以关闭讨论访问。
+
+<details>
+<summary>讨论的编辑、重试和本机文件</summary>
+
+`read_discussion` 返回完整正文及 SHA-256 `revision`；`edit_discussion` 接收完整的新正文、简短简介和 `expected_revision`，保留编号与文件路径。`index` 可以读取，但不能作为编辑目标。追加文字时也先读取原文，再提交包含原文的新正文。
+
+每次新建或编辑需要一个唯一 `request_id`。遇到连接中断时，用同一个编号和相同参数重试，MCP 会继续完成那次写入，或返回已完成的结果。文档和索引分别原子替换；中途失败可能出现“正文已保存、索引尚未更新”，重试会补齐索引。服务用本机锁串行处理多个 MCP 进程的写入。版本校验能发现读取后的修改，但不能锁住不遵守该锁的本机编辑器；请避免在网页保存的同时修改同一文件。
+
+运行目录中的 `discussion.sqlite3` 保存已分配编号、简介和请求记录；未完成请求还会临时保留待写正文，完成后移除。保留运行目录或索引中的编号记录，才能在本机删除文件后继续避免复用旧编号。不要手动删除正在使用的运行状态。
+
+每份正文最多 256 KiB，每个项目最多 1,000 份讨论、10,000 次新建或编辑请求记录，编号最多到 `D-999999`。达到上限会停止新写入；同一请求重试仍可完成。缺失或过期的索引不妨碍列出已有讨论，下一次成功写入会重建索引。讨论只接受平铺的编号 Markdown 文件，链接、特殊文件和配置中排除的路径都不可访问。
 
 </details>
 
@@ -202,6 +244,8 @@ Memory、Attention 的索引分别为 `index.md`，条目路径为 `entries/M-XX
 **HTTP 模式**会先要求你输入 `.runtime/owner-access.txt` 中的口令，再确认授权。这个口令由首次 `setup` 自动生成，重复运行 `setup` 不会更换口令，也不会让已有授权失效。
 
 普通重启会保留授权。如果更换了公网域名或使用新的运行状态文件夹，需要在 ChatGPT 中重新连接。
+
+开启讨论功能不会扩大旧授权。要读取或编辑讨论，需要在授权页同意新增权限；访问口令仍是原来那一个。
 
 想取消全部授权：
 
@@ -220,9 +264,9 @@ uv run python run.py rotate-password
 <details>
 <summary>开发者参考：OAuth 协议与浏览器设置</summary>
 
-HTTP 使用 MCP SDK 的授权码流程、S256 PKCE、精确回调匹配，以及固定的 issuer/resource。权限范围仅为 `governance:read`，工具描述及 `_meta.securitySchemes` 均声明 OAuth2 和所需 scope；认证 challenge 也返回 scope。服务提供 OAuth Authorization Server Metadata、Protected Resource Metadata，并在授权回调中包含 RFC 9207 `iss`。
+HTTP 使用 MCP SDK 的授权码流程、S256 PKCE、精确回调匹配，以及固定的 issuer/resource。基础权限是 `governance:read`；讨论读取另需 `discussion:read`，写入再需 `discussion:write`。工具描述及 `_meta.securitySchemes` 声明各自的权限，服务端逐次验证；缺少权限时返回包含 `_meta["mcp/www_authenticate"]` 的错误，供客户端发起新增授权。实现依据见 [OpenAI 官方认证文档](https://developers.openai.com/plugins/build/auth)。服务提供 OAuth Authorization Server Metadata、Protected Resource Metadata，并在授权回调中包含 RFC 9207 `iss`。
 
-授权页检查本机口令、Cookie、CSRF token 和 Origin，禁止 iframe 嵌入。浏览器会话有效 10 分钟，授权码有效 120 秒且只能兑换一次。访问令牌有效 1 小时，刷新令牌有效 30 天；刷新时轮换令牌，旧刷新令牌被重复使用时撤销整条授权链。SQLite 事务保证一次性消费。令牌以 SHA-256 索引保存；issuer 或 scope 改变时撤销旧授权，从历史广泛访问权限升级为治理只读时也会撤销旧授权，保留本机口令。
+授权页检查本机口令、Cookie、CSRF token 和 Origin，禁止 iframe 嵌入。浏览器会话有效 10 分钟，授权码有效 120 秒且只能兑换一次。访问令牌有效 1 小时，刷新令牌有效 30 天；刷新时轮换令牌，旧刷新令牌被重复使用时撤销整条授权链。SQLite 事务保证一次性消费。令牌以 SHA-256 索引保存，刷新只能保留或缩小已授权范围。更换 issuer 或从历史广泛访问升级为治理只读时撤销旧授权，保留本机口令；启用讨论时保留原有治理授权。关闭某种讨论权限后，包含该权限的令牌会被拒绝，需要重新连接。
 
 授权页使用 `Referrer-Policy: same-origin`。改为 `no-referrer` 会让原生表单 POST 的 Origin 变成 `null`，触发来源检查。CSP 的 `form-action` 允许同源提交和已验证的精确回调，避免浏览器阻止表单后的 303 跳转；其他页面默认只允许同源提交。相关规则见 [Fetch 标准](https://fetch.spec.whatwg.org/#append-a-request-origin-header)。
 

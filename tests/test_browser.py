@@ -24,7 +24,8 @@ from .smoke_live import main as protocol_smoke
 
 
 @pytest.mark.skipif(not os.getenv("OPPENPROJECT_PLAYWRIGHT"), reason="Optional isolated browser verification")
-def test_native_browser_consent_and_callback(settings, tmp_path):
+@pytest.mark.parametrize("discussion_mode", ["off", "write"])
+def test_native_browser_consent_and_callback(settings, tmp_path, discussion_mode):
     callback_headers = []
 
     class CallbackHandler(BaseHTTPRequestHandler):
@@ -52,7 +53,11 @@ def test_native_browser_consent_and_callback(settings, tmp_path):
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
         local = replace(
-            settings, public_url=f"http://127.0.0.1:{port}", port=port, extra_redirect_uris=[callback]
+            settings,
+            public_url=f"http://127.0.0.1:{port}",
+            port=port,
+            extra_redirect_uris=[callback],
+            discussion_mode=discussion_mode,
         )
         server = uvicorn.Server(uvicorn.Config(create_app(local), access_log=False, log_level="error"))
         thread = threading.Thread(target=server.run, kwargs={"sockets": [sock]}, daemon=True)

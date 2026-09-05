@@ -5,13 +5,15 @@ import os
 import sys
 from datetime import timedelta
 
+import pytest
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 from oppenproject.config import APP_NAME, ROOT
 
 
-async def test_real_stdio_process_governance_boundary_and_no_oauth(tmp_path):
+@pytest.mark.parametrize("discussion_mode", ["off", "write"])
+async def test_real_stdio_process_governance_boundary_and_no_oauth(tmp_path, discussion_mode):
     project = tmp_path / "projects/示例项目"
     project.mkdir(parents=True)
     (project / "project.md").write_text(
@@ -24,7 +26,8 @@ async def test_real_stdio_process_governance_boundary_and_no_oauth(tmp_path):
         target.write_text("PRIVATE_CONTENT_NEVER_EXPOSE", encoding="utf-8")
     config = tmp_path / "config.local.json"
     (tmp_path / ".env").write_text(
-        'OPPEN_TRANSPORT=stdio\nOPPEN_SCAN_ROOTS=["./projects"]\nOPPEN_STATE_DIR=.runtime\n',
+        'OPPEN_TRANSPORT=stdio\nOPPEN_SCAN_ROOTS=["./projects"]\nOPPEN_STATE_DIR=.runtime\n'
+        + f"OPPEN_DISCUSSION_MODE={discussion_mode}\n",
         encoding="utf-8",
     )
     env = {k: v for k, v in os.environ.items() if not k.startswith("OPPEN_")}
@@ -38,7 +41,7 @@ async def test_real_stdio_process_governance_boundary_and_no_oauth(tmp_path):
         async with ClientSession(read, write, read_timeout_seconds=timedelta(seconds=10)) as session:
             assert (await session.initialize()).serverInfo.name == APP_NAME
             listed = await session.list_tools()
-            assert len(listed.tools) == 8
+            assert len(listed.tools) == (12 if discussion_mode == "write" else 8)
             for tool in listed.tools:
                 assert tool.model_dump(by_alias=True)["securitySchemes"] == [{"type": "noauth"}]
                 assert tool.meta["securitySchemes"] == [{"type": "noauth"}]
@@ -69,7 +72,36 @@ async def test_real_stdio_process_governance_boundary_and_no_oauth(tmp_path):
             assert not result.structuredContent["results"]
             result = await session.call_tool("list_files", {"project_id": pid})
             assert [item["path"] for item in result.structuredContent["entries"]] == ["project.md"]
-    assert not (tmp_path / ".runtime").exists()
+            if discussion_mode == "write":
+                created = await session.call_tool(
+                    "create_discussion",
+                    {
+                        "project_id": pid,
+                        "topic": "分析方案讨论",
+                        "content": "第一版草稿",
+                        "description": "讨论分析方案",
+                        "request_id": "process-create-0001",
+                    },
+                )
+                assert not created.isError
+                doc = created.structuredContent
+                assert doc["id"] == "D-000001"
+                edited = await session.call_tool(
+                    "edit_discussion",
+                    {
+                        "project_id": pid,
+                        "discussion_id": doc["id"],
+                        "content": "补充后的草稿",
+                        "description": "补充分析方案",
+                        "expected_revision": doc["revision"],
+                        "request_id": "process-edit-000001",
+                    },
+                )
+                assert not edited.isError
+                assert (project / doc["path"]).read_text(encoding="utf-8") == "补充后的草稿"
+    if discussion_mode == "off":
+        assert not (tmp_path / ".runtime").exists()
+    assert not (tmp_path / ".runtime/oauth.sqlite3").exists()
     assert not config.exists()
     # stdout was consumed by the SDK as JSON-RPC throughout, with no CLI banners.
     assert json.loads(json.dumps(projects))[0]["file_access"] == "governance-only"
