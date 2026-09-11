@@ -108,7 +108,7 @@ async def main(base_url, settings=None):
                         result = await session.call_tool("list_projects", {"query": "OppenSteward-MCP"})
                         assert not result.isError and result.structuredContent
                         projects = result.structuredContent["projects"]
-                        assert projects, "Discovery still running; retry after the first batch"
+                        assert projects, "Register the MCP project in projects.local.json for this verifier"
                         pid = projects[0]["id"]
                         overview = await session.call_tool("project_overview", {"project_id": pid})
                         assert not overview.isError
@@ -151,8 +151,8 @@ async def main(base_url, settings=None):
                                     "traversal_denied": True,
                                     "projects_found": catalog.structuredContent["total"],
                                     "discovery_status": discovery["status"],
-                                    "scan_in_progress": discovery.get("bounded", True),
-                                    "unreadable_directories": discovery.get("error_count", 0),
+                                    "registration_mode": discovery["mode"],
+                                    "unavailable_registrations": discovery.get("error_count", 0),
                                 }
                             )
                         )

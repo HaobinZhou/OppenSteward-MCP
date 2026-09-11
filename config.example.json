@@ -1,6 +1,6 @@
 {
   "transport": "stdio",
-  "scan_roots": ["~"],
+  "projects_file": "projects.local.json",
   "exclude_roots": [],
   "state_dir": ".runtime",
   "skill_root": null

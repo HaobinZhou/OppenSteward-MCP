@@ -6,7 +6,7 @@ import pytest
 
 from oppenproject.catalog import STEWARD, AccessDenied, Catalog, open_beneath
 
-from .conftest import rpc, token
+from .conftest import register_paths, rpc, token
 
 MEMORY_ENTRY = ".oppen-project-steward/Memory/entries/M-0001.md"
 
@@ -22,8 +22,8 @@ def first(catalog):
     return next(iter(catalog.projects.values()))
 
 
-def test_discovers_both_skills_nested_legacy_and_excludes_fake_markers(catalog, settings):
-    root = Path(settings.scan_roots[0])
+def test_registers_both_skills_without_implicitly_registering_nested_projects(catalog, settings):
+    root = settings.projects_file.parent / "projects"
     for name, marker in [
         ("r-v3", "<!-- stepwise-r-project:v3 -->"),
         ("r-v2", "<!-- stepwise-r-project:v2 -->"),
@@ -33,9 +33,14 @@ def test_discovers_both_skills_nested_legacy_and_excludes_fake_markers(catalog, 
         project = root / name
         project.mkdir()
         (project / "project.md").write_text(marker, encoding="utf-8")
+        register_paths(settings, project)
     nested = Path(first(catalog).root) / "nested"
     nested.mkdir()
     (nested / "project.md").write_text("<!-- stepwise-r-project:v3 -->", encoding="utf-8")
+    catalog.refresh()
+    assert len(catalog.projects) == 4
+    assert "nested" not in {p.name for p in catalog.projects.values()}
+    register_paths(settings, nested)
     catalog.refresh()
     assert len(catalog.projects) == 5
     assert {p.version for p in catalog.projects.values()} == {"v3", "v2", "legacy-layout"}
@@ -152,17 +157,7 @@ def test_removed_marker_and_excluded_root_fail_closed(catalog, settings):
     settings.exclude_roots = [project.root]
     with pytest.raises(AccessDenied):
         catalog.read_file(project.id, "notes.md")
-    assert catalog.refresh()["projects_found"] == 0
-
-
-def test_partial_scan_is_reported(catalog, settings):
-    settings.max_scan_dirs = 1
-    assert catalog.refresh()["status"] == "partial"
-    assert catalog.report["bounded"]
-    while catalog.pending:
-        catalog.refresh()
-    assert catalog.report["status"] == "complete"
-    assert len(catalog.projects) == 1
+    assert catalog.refresh(force=True)["projects_found"] == 0
 
 
 def test_end_to_end_mcp_search_fetch_and_path_denial(client):
@@ -186,7 +181,7 @@ def test_end_to_end_mcp_search_fetch_and_path_denial(client):
 
 @pytest.mark.parametrize("layout", ["steward", "legacy", "r-v3", "r-v2"])
 def test_governance_allowlist_for_all_layouts(settings, layout):
-    root = Path(settings.scan_roots[0]) / layout
+    root = (settings.projects_file.parent / "projects") / layout
     root.mkdir()
     skill = "stepwise-r-project" if layout.startswith("r-") else "oppen-project-steward"
     prefix = ".oppen-project-steward/" if layout == "steward" else ""
@@ -236,6 +231,7 @@ def test_governance_allowlist_for_all_layouts(settings, layout):
         (root / path).write_text("PRIVATE_DATA_NEVER_EXPOSE", encoding="utf-8")
     if layout == "r-v2":
         blocked += ["Memory/index.md", "Memory/entries/M-0001.md", "Attention/index.md"]
+    register_paths(settings, root)
     catalog = Catalog(settings)
     catalog.refresh()
     project = next(p for p in catalog.projects.values() if p.root == str(root))

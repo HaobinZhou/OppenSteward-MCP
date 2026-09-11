@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from dataclasses import dataclass, field
@@ -16,21 +17,19 @@ ENV_FIELDS = {
     "PUBLIC_URL": "public_url",
     "HOST": "host",
     "PORT": "port",
-    "SCAN_ROOTS": "scan_roots",
+    "PROJECTS_FILE": "projects_file",
     "EXCLUDE_ROOTS": "exclude_roots",
     "STATE_DIR": "state_dir",
     "SKILL_ROOT": "skill_root",
-    "SCAN_INTERVAL": "scan_interval",
-    "SCAN_SECONDS": "scan_seconds",
-    "MAX_SCAN_DIRS": "max_scan_dirs",
     "EXTRA_REDIRECT_URIS": "extra_redirect_uris",
     "TUNNEL_ID": "tunnel_id",
     "TUNNEL_PROFILE": "tunnel_profile",
     "TUNNEL_CLIENT": "tunnel_client",
     "DISCUSSION_MODE": "discussion_mode",
 }
-INTEGER_FIELDS = {"port", "scan_interval", "scan_seconds", "max_scan_dirs"}
-LIST_FIELDS = {"scan_roots", "exclude_roots", "extra_redirect_uris"}
+INTEGER_FIELDS = {"port"}
+LIST_FIELDS = {"exclude_roots", "extra_redirect_uris"}
+LEGACY_SCAN_FIELDS = {"scan_roots", "scan_interval", "scan_seconds", "max_scan_dirs"}
 
 
 def runtime_environment(directory: Path = ROOT) -> dict[str, str]:
@@ -45,13 +44,10 @@ class Settings:
     public_url: str = "http://127.0.0.1:8766"
     host: str = "127.0.0.1"
     port: int = 8766
-    scan_roots: list[str] = field(default_factory=lambda: [str(Path.home())])
+    projects_file: Path = ROOT / "projects.local.json"
     exclude_roots: list[str] = field(default_factory=list)
     state_dir: Path = ROOT / ".runtime"
     skill_root: Path | None = None
-    scan_interval: int = 300
-    scan_seconds: int = 90
-    max_scan_dirs: int = 500_000
     extra_redirect_uris: list[str] = field(default_factory=list)
     tunnel_id: str = ""
     tunnel_profile: str = "oppen-steward"
@@ -76,6 +72,10 @@ class Settings:
             raise ValueError("port must be between 1024 and 65535")
         if not self.state_dir:
             raise ValueError("state_dir must not be empty")
+        if not self.projects_file:
+            raise ValueError("projects_file must not be empty")
+        # Do not resolve through a symlink: the catalog opens this exact file safely.
+        self.projects_file = Path(os.path.abspath(Path(self.projects_file).expanduser()))
         self.state_dir = Path(self.state_dir).expanduser().resolve()
         self.skill_root = Path(self.skill_root).expanduser().resolve() if self.skill_root else None
         for name in LIST_FIELDS:
@@ -84,12 +84,7 @@ class Settings:
                 isinstance(item, str) and item.strip() for item in value
             ):
                 raise ValueError(f"{name} must be a JSON array of nonempty strings")
-        if not self.scan_roots:
-            raise ValueError("Configure at least one scan root")
-        self.scan_roots = [str(Path(p).expanduser().resolve()) for p in self.scan_roots]
         self.exclude_roots = [str(Path(p).expanduser().resolve()) for p in self.exclude_roots]
-        if self.scan_interval < 10 or self.scan_seconds < 1 or self.max_scan_dirs < 1:
-            raise ValueError("Invalid scan limits")
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", self.tunnel_profile):
             raise ValueError("Invalid tunnel profile name")
 
@@ -106,7 +101,7 @@ class Settings:
             if path.is_file():
                 return path
         raise ValueError(
-            "Skill guide not installed; configure OPPEN_SKILL_ROOT. Project discovery still works."
+            "Skill guide not installed; configure OPPEN_SKILL_ROOT. Registered projects remain accessible."
         )
 
     @property
@@ -121,9 +116,15 @@ class Settings:
     def load(cls, path: Path = ROOT / "config.local.json"):
         path = Path(path).expanduser().resolve()
         values = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {"transport": "stdio"}
-        if not isinstance(values, dict) or set(values) - set(cls.__dataclass_fields__):
+        if not isinstance(values, dict) or set(values) - set(cls.__dataclass_fields__) - LEGACY_SCAN_FIELDS:
             raise ValueError("Config must be an object containing documented settings only")
         env = runtime_environment(path.parent)
+        if set(values) & LEGACY_SCAN_FIELDS or any("OPPEN_" + k.upper() in env for k in LEGACY_SCAN_FIELDS):
+            logging.getLogger(__name__).warning(
+                "Automatic scanning has been removed. Old scan settings are ignored; "
+                "register exact project roots in projects.local.json (OPPEN_PROJECTS_FILE)."
+            )
+        values = {k: v for k, v in values.items() if k not in LEGACY_SCAN_FIELDS}
         for suffix, name in ENV_FIELDS.items():
             raw = env.get("OPPEN_" + suffix)
             if raw is None:
@@ -137,14 +138,15 @@ class Settings:
                     f"Invalid OPPEN_{suffix}; expected an integer or JSON array as documented"
                 ) from e
         # Resolve paths against the selected config directory, independent of caller cwd.
-        for name in ("state_dir", "skill_root"):
-            value = values.get(name, ".runtime" if name == "state_dir" else None)
+        for name in ("state_dir", "skill_root", "projects_file"):
+            defaults = {"state_dir": ".runtime", "skill_root": None, "projects_file": "projects.local.json"}
+            value = values.get(name, defaults[name])
             if value:
                 p = Path(value).expanduser()
                 values[name] = str(p if p.is_absolute() else path.parent / p)
             else:
                 values[name] = None
-        for name in ("scan_roots", "exclude_roots"):
+        for name in ("exclude_roots",):
             if name in values and isinstance(values[name], list):
                 values[name] = [
                     str(Path(p).expanduser() if Path(p).expanduser().is_absolute() else path.parent / p)

@@ -2,7 +2,7 @@
 
 在 ChatGPT 网页版里查看你电脑上的项目说明、决策记录和待处理事项，也可以把讨论保存回项目。
 
-OppenSteward-MCP 会找到由 **Oppen Project Steward** 或 **Stepwise R Project** 管理的项目，让 GPT 帮你了解项目进展、查找过去的决定、汇总需要关注的问题。比如，你可以直接问：
+把由 **Oppen Project Steward** 或 **Stepwise R Project** 管理的项目登记到本机配置后，OppenSteward-MCP 就能让 GPT 帮你了解项目进展、查找过去的决定、汇总需要关注的问题。比如，你可以直接问：
 
 - “我有哪些项目还有待处理事项？”
 - “这个项目当时为什么选择了这套方案？”
@@ -23,6 +23,8 @@ uv sync --locked
 
 Windows 可以使用 PowerShell。下面的 `uv run python ...` 命令在三个平台上通用。
 
+先将 `projects.example.json` 复制为 **`projects.local.json`**，填入想开放的每个项目的完整路径。文件可以先留空；没有登记的项目不会开放。具体写法见下面的“环境变量配置”。
+
 接下来选择一种连接方式：没有公网域名，使用 **Secure MCP Tunnel**；已经有域名和 HTTPS 转发，使用 **HTTP + OAuth**。
 
 ### 没有公网域名：使用 Secure MCP Tunnel
@@ -31,7 +33,7 @@ Windows 可以使用 PowerShell。下面的 `uv run python ...` 命令在三个�
 
 1. 下载与你的系统对应的 [tunnel-client](https://github.com/openai/tunnel-client/releases/latest)，将它加入 PATH。如果不想配置 PATH，也可以把程序的完整路径填入 `.env` 的 `OPPEN_TUNNEL_CLIENT`。
 2. 将 `.env.example` 复制一份，命名为 `.env`。
-3. 打开 `.env`，填入 `OPPEN_TUNNEL_ID` 和 `CONTROL_PLANE_API_KEY`，再把 `OPPEN_SCAN_ROOTS` 改成你的项目所在文件夹。路径写法见下面的“环境变量配置”。
+3. 打开 `.env`，填入 `OPPEN_TUNNEL_ID` 和 `CONTROL_PLANE_API_KEY`。项目路径填写在 `projects.local.json` 中。
 4. 依次运行：
 
 ```sh
@@ -49,11 +51,10 @@ uv run python run.py tunnel run
 
 ### 已有域名和 HTTPS 转发：使用 HTTP + OAuth
 
-将 `.env.http.example` 复制为 `.env`，填入自己的域名和项目路径。例如：
+将 `.env.http.example` 复制为 `.env`，填入自己的域名。例如：
 
 ```dotenv
 OPPEN_PUBLIC_URL=https://projects.example.com
-OPPEN_SCAN_ROOTS=["~/Projects"]
 ```
 
 域名这一项不需要加 `/mcp`。然后运行：
@@ -76,7 +77,7 @@ HTTP 模式可以用下面的命令在后台运行：
 ```sh
 uv run python service.py start    # 启动
 uv run python service.py status   # 查看状态
-uv run python service.py restart  # 重启，修改配置后使用
+uv run python service.py restart  # 重启，修改 .env 后使用
 uv run python service.py stop     # 停止
 ```
 
@@ -91,31 +92,41 @@ HTTP 服务只监听本机回环地址。需要转发的路径包括 `/.well-kno
 
 Tunnel 使用本机 stdio 通信，不启动本项目的 HTTP 服务，也不转发 OAuth 登录页。启动器调用官方 `tunnel-client` 的 `sample_mcp_stdio_local` 配置；密钥通过环境变量传递，不写入命令参数或本项目的 JSON 配置。可用 `uv run python run.py tunnel init --dry-run` 查看将要执行的命令。更多选项见 [官方 Tunnel 配置说明](https://github.com/openai/tunnel-client/blob/master/docs/configuration.md)。
 
-如果服务找不到项目，先检查扫描路径和当前账户的文件权限。macOS 还可能需要为启动服务的应用授予文件夹访问权限，无需为此改用管理员或 root 账户。
+如果服务没有列出项目，运行 `uv run python run.py projects` 检查登记情况，确认路径指向具体项目、管理文件存在且当前账户有读取权限。macOS 还可能需要为启动服务的应用授予文件夹访问权限，无需为此改用管理员或 root 账户。
 
 </details>
 
 ## 环境变量配置
 
-日常使用只需要编辑项目文件夹中的 **`.env`**。最常改的是项目路径，例如：
+**要让 GPT 访问哪个项目，就把哪个项目登记到 `projects.local.json`。** 例如：
 
-```dotenv
-# macOS / Linux
-OPPEN_SCAN_ROOTS=["~/Projects", "~/Research"]
-
-# Windows：路径使用正斜线
-# OPPEN_SCAN_ROOTS=["C:/Users/Me/Projects", "D:/Research"]
-
-# 不想让 GPT 访问的文件夹
-OPPEN_EXCLUDE_ROOTS=["~/Projects/private"]
+```json
+{
+  "projects": [
+    "~/Projects/MyApp",
+    "~/Research/MyAnalysis"
+  ]
+}
 ```
 
-可以填写多个文件夹；不修改时，默认从当前用户的主目录开始查找。路径列表使用上面这种带引号和方括号的写法，`~` 表示用户主目录。
+Windows 可以写成 `C:/Users/Me/Projects/MyApp`。`~` 表示当前用户的主目录，相对路径以这份 JSON 文件所在的文件夹为起点。每一项都应指向具体项目：填入 `~/Projects` 不会顺带开放它里面的其他项目，嵌套的子项目也要单独登记。
+
+**保存后自动生效，不需要重启 MCP 或重新授权。** 加一条路径就开放一个项目，删掉一条就停止该项目的后续访问；已有对话里的项目 ID 也不能绕过删除登记。想全部关闭时，把列表改成 `{"projects": []}`。已经返回到对话的文字不会因此消失，正在执行的请求可能完成。
+
+服务空闲时每两秒只检查这一个配置文件的修改信息；内容没变就不读取项目目录。文件变化后才读取列表，并检查所列项目的管理入口。不会递归扫描硬盘，也不会定期重读所有项目。如果配置丢失、无法读取或 JSON 写错，会暂时停止所有项目访问；修正保存后自动恢复。如果某个已登记项目暂时不在线，重新接上磁盘后可以让 GPT 调用 `refresh_projects` 重试，或在本机运行 `uv run python run.py projects` 检查。
+
+连接方式、域名和讨论权限等设置仍在 **`.env`** 中，修改这些设置后需要重启服务。想把项目列表放在别处，可以设置 `OPPEN_PROJECTS_FILE`：
+
+```dotenv
+OPPEN_PROJECTS_FILE=projects.local.json
+# 额外排除某个文件夹及其子文件夹
+OPPEN_EXCLUDE_ROOTS=["~/Projects/MyApp/private"]
+```
 
 | 设置 | 什么时候需要改 |
 | --- | --- |
 | `OPPEN_TRANSPORT` | Tunnel 使用 `stdio`，域名转发使用 `http`；两份示例已经分别填好 |
-| `OPPEN_SCAN_ROOTS` | 指定你的项目所在文件夹 |
+| `OPPEN_PROJECTS_FILE` | 项目登记文件的位置；默认 `projects.local.json`，其中的列表支持热更新 |
 | `OPPEN_EXCLUDE_ROOTS` | 排除不想分享的文件夹及其子文件夹 |
 | `OPPEN_DISCUSSION_MODE` | 默认 `off`；`read` 开放讨论读取，`write` 同时允许新建和编辑讨论 |
 | `OPPEN_PUBLIC_URL` | HTTP 模式下填写自己的 HTTPS 域名 |
@@ -126,7 +137,7 @@ OPPEN_EXCLUDE_ROOTS=["~/Projects/private"]
 
 如果还想让 GPT 查看两个技能的使用说明，可以设置 `OPPEN_SKILL_ROOT`，指向同时包含 `oppen-project-steward` 和 `stepwise-r-project` 文件夹的位置。不填时会尝试在 `~/.codex/skills` 和 `~/.agents/skills` 中查找；没安装技能也能读取已有项目，只是无法提供技能说明。
 
-`.env` 可能包含密钥，请保留在自己的电脑上。仓库已忽略 `.env`、`.runtime` 和 `config.local.json`，它们不会随普通 Git 提交上传。
+`.env` 可能包含密钥，请保留在自己的电脑上。仓库已忽略 `.env`、`.runtime`、`config.local.json` 和 `projects.local.json`，它们不会随普通 Git 提交上传。
 
 <details>
 <summary>其他设置与旧版本配置</summary>
@@ -135,15 +146,12 @@ OPPEN_EXCLUDE_ROOTS=["~/Projects/private"]
 | --- | --- |
 | `OPPEN_STATE_DIR` | `.runtime`，保存登录口令、OAuth 数据库、讨论编号与重试记录，以及本机日志 |
 | `OPPEN_HOST` | `127.0.0.1`，只允许本机回环地址；端口范围为 1024–65535 |
-| `OPPEN_SCAN_INTERVAL` | `300` 秒，完成一轮后再次扫描的间隔，最小为 10 秒 |
-| `OPPEN_SCAN_SECONDS` | `90` 秒，每批扫描的时间上限 |
-| `OPPEN_MAX_SCAN_DIRS` | `500000`，每批最多扫描的文件夹数量 |
 | `OPPEN_EXTRA_REDIRECT_URIS` | `[]`，额外允许的 OAuth 回调地址，需要完整匹配，不支持通配符 |
 | `OPPEN_TUNNEL_PROFILE` | `oppen-steward`，官方 Tunnel 客户端中保存的连接配置名称 |
 
 同一个设置出现在多处时，优先级是：命令行参数 > 系统环境变量 > `.env` > `config.local.json` > 默认值。新安装默认使用 stdio；旧 JSON 配置未指定连接方式时，仍使用 HTTP。
 
-旧版 `configure` 命令和 JSON 配置可以继续使用，示例见 `config.example.json`。建议日常统一在 `.env` 修改，避免多个文件互相覆盖。相对路径以配置文件所在文件夹为起点；通过 `--config /path/config.local.json` 指定其他位置时，也会读取该文件旁的 `.env`。`.env` 使用 UTF-8 编码，不执行 shell 命令，也不展开 `${VAR}`。
+旧版连接设置和 JSON 配置仍可使用，示例见 `config.example.json`。旧的 `scan_roots`、`OPPEN_SCAN_ROOTS` 和扫描频率设置已停用，也不会自动转成项目登记。升级时请把要保留的具体项目写入 `projects.local.json`。`run.py scan` 只作为 `run.py projects` 的兼容命令，不再扫描目录。相对路径以配置文件所在文件夹为起点；通过 `--config /path/config.local.json` 指定其他位置时，也会读取该文件旁的 `.env`。`.env` 使用 UTF-8 编码，不执行 shell 命令，也不展开 `${VAR}`。
 
 HTTP 模式未填写域名时，默认地址为 `http://127.0.0.1:8766`，仅适合本机使用。远程连接需要填写真实的 HTTPS 域名。
 
@@ -166,9 +174,9 @@ HTTP 模式未填写域名时，默认地址为 `http://127.0.0.1:8766`，仅适
 
 允许读取的文档中，正文、标题和记载的路径会发送给 GPT。因此，如果你把敏感数据直接写进了这些治理文档，GPT 也能看到那部分文字。服务不会继续读取其中链接的文件或图片。
 
-连接后，GPT 可以访问你配置范围内所有已发现项目的治理文档，包括以后新增的项目。如果不想分享某个项目，在本机 `.env` 中将它排除即可；GPT 无法自行扩大访问范围。
+连接后，GPT 可以访问你在项目列表中登记的治理文档，包括以后手动加入的项目。新建项目不会自动开放；GPT 不能修改这份配置或替自己添加项目。
 
-服务会定期查找新项目。文件夹较多或部分目录没有访问权限时，扫描状态可能显示 `partial`。这时可以稍后再查看，或检查配置路径及文件权限。发现项目只说明找到了它的管理文件，不会替你验证、迁移或修改项目。
+登记只会检查项目的管理标记，不会替你完成技能验证、迁移或修改项目。状态为 `partial` 表示部分登记路径不可用、被排除或没有可识别的管理文件；本机 `run.py projects` 会列出这些路径，远端只返回数量。
 
 <details>
 <summary>开发者参考：识别与读取规则</summary>
@@ -177,7 +185,7 @@ Steward v3 通过 `.oppen-project-steward/registry.md` 识别；旧布局 Stewar
 
 Memory、Attention 的索引分别为 `index.md`，条目路径为 `entries/M-XXXX.md`、`entries/A-XXXX.md`。索引需符合对应技能的格式，条目需在索引中登记。R v2 的旧式 Memory 不开放。
 
-`list_files`、`read_file`、`search`、`fetch` 和 `/files/*` 都遵守同一套治理文件列表。讨论只能通过专门的 Discussion 工具访问，不会混入原有读取入口。扫描只读取管理标记，跳过系统、依赖、缓存和运行状态目录；分批扫描未完成时会自动继续。远端扫描诊断包含计数和状态，不包含无关的失败目录路径。
+`list_files`、`read_file`、`search`、`fetch` 和 `/files/*` 都遵守同一套治理文件列表。讨论只能通过专门的 Discussion 工具访问，不会混入原有读取入口。加载配置只检查所列根目录的固定管理入口，不遍历子目录。项目列表限 1,000 项、配置文件限 1 MiB；只接受普通文件，拒绝链接和特殊文件。远端状态沿用 `discovery` 字段，其中 `mode` 为 `registered`。
 
 读取只接受项目相对路径，拒绝路径穿越、绝对路径、NUL、反斜线、盘符及替代数据流写法。macOS/Linux 逐层使用文件描述符和 `O_NOFOLLOW`；Windows 使用原生句柄并在读取期间锁定祖先目录。符号链接、硬链接、被替换的根目录和特殊文件均被拒绝。Windows 目前只支持普通本地文件夹，不支持网络共享、目录联接或云端占位文件；同步软件或编辑器占用也可能导致读取失败。
 
@@ -187,8 +195,8 @@ Memory、Attention 的索引分别为 `index.md`，条目路径为 `entries/M-XX
 
 | MCP 工具 | 用途 |
 | --- | --- |
-| `list_projects` | 查找项目，支持按名称、路径或技能筛选 |
-| `refresh_projects` | 开始或继续扫描 |
+| `list_projects` | 列出已登记项目，支持按名称、路径或技能筛选 |
+| `refresh_projects` | 重新加载项目列表并检查已登记的路径，不扫描其他目录 |
 | `project_overview` | 查看项目入口和 Memory、Attention 的位置 |
 | `list_files` | 浏览允许读取的文件 |
 | `read_file` | 分块读取文档 |

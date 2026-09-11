@@ -21,6 +21,7 @@ def test_fresh_default_and_legacy_http(tmp_path):
     config = tmp_path / "config.local.json"
     assert Settings.load(config).transport == "stdio"
     assert Settings.load(config).state_dir == tmp_path / ".runtime"
+    assert Settings.load(config).projects_file == tmp_path / "projects.local.json"
     config.write_text(json.dumps({"public_url": "https://projects.example.com"}), encoding="utf-8")
     assert Settings.load(config).transport == "http"
     assert not (tmp_path / ".runtime").exists()
@@ -30,7 +31,7 @@ def test_env_precedence_paths_and_no_shell_interpolation(tmp_path, monkeypatch):
     config = tmp_path / "config.local.json"
     config.write_text('{"port": 8880}', encoding="utf-8")
     (tmp_path / ".env").write_text(
-        'OPPEN_PORT=8881\nOPPEN_TRANSPORT=stdio\nOPPEN_SCAN_ROOTS=["./项目"]\n'
+        "OPPEN_PORT=8881\nOPPEN_TRANSPORT=stdio\nOPPEN_PROJECTS_FILE=./项目列表.json\n"
         'OPPEN_EXCLUDE_ROOTS=["./项目/private"]\nOPPEN_STATE_DIR=state\nOPPEN_SKILL_ROOT=skills\n'
         "CONTROL_PLANE_API_KEY='fixture-${HOME}-$(echo literal)'\n",
         encoding="utf-8",
@@ -38,7 +39,7 @@ def test_env_precedence_paths_and_no_shell_interpolation(tmp_path, monkeypatch):
     monkeypatch.setenv("OPPEN_PORT", "8882")
     result = Settings.load(config)
     assert result.port == 8882 and result.transport == "stdio"
-    assert result.scan_roots == [str(tmp_path / "项目")]
+    assert result.projects_file == tmp_path / "项目列表.json"
     assert result.exclude_roots == [str(tmp_path / "项目/private")]
     assert result.state_dir == tmp_path / "state" and result.skill_root == tmp_path / "skills"
     assert runtime_environment(tmp_path)["CONTROL_PLANE_API_KEY"] == "fixture-${HOME}-$(echo literal)"
@@ -54,9 +55,7 @@ def test_env_precedence_paths_and_no_shell_interpolation(tmp_path, monkeypatch):
         ("HOST", "0.0.0.0"),
         ("PUBLIC_URL", "http://public.example.com"),
         ("PUBLIC_URL", "https://example.com/mcp"),
-        ("SCAN_ROOTS", "[]"),
-        ("SCAN_ROOTS", "[1]"),
-        ("SCAN_ROOTS", '"/tmp"'),
+        ("PROJECTS_FILE", ""),
         ("STATE_DIR", ""),
         ("TUNNEL_PROFILE", "../outside"),
     ],
@@ -82,3 +81,14 @@ def test_missing_skills_do_not_prevent_project_discovery(tmp_path):
         settings.skill_guide("oppen-project-steward")
     with pytest.raises(ValueError, match="Unknown skill"):
         settings.skill_guide("../../.env")
+
+
+def test_old_scan_config_never_registers_roots(tmp_path, monkeypatch, caplog):
+    config = tmp_path / "config.local.json"
+    config.write_text(json.dumps({"scan_roots": [str(tmp_path)], "scan_interval": 10}), encoding="utf-8")
+    monkeypatch.setenv("OPPEN_SCAN_ROOTS", '["~"]')
+    settings = Settings.load(config)
+    catalog = Catalog(settings)
+    assert catalog.refresh()["status"] == "config_missing"
+    assert not catalog.projects
+    assert "Automatic scanning has been removed" in caplog.text

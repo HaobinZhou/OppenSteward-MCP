@@ -3,20 +3,20 @@ from __future__ import annotations
 import base64
 import fnmatch
 import hashlib
+import json
 import mimetypes
 import os
 import re
 import stat
 import threading
 import time
-from collections import deque
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path, PurePosixPath
 
 from .config import Settings
 
-# Directory discovery skips system/runtime trees, but does not follow symlinks.
+# These internal/runtime names are excluded from file access, not traversed for discovery.
 SKIP_DIRS = {
     ".git",
     ".hg",
@@ -191,16 +191,9 @@ class Catalog:
     def __init__(self, settings: Settings):
         self.settings = settings
         self.projects: dict[str, Project] = {}
-        self.report: dict = {"status": "not_scanned", "errors": []}
-        self.lock = threading.Lock()
-        self.stop_event = threading.Event()
-        self.updated = 0.0
-        self.pending = deque()
-        self.seen = set()
-        self.cycle_found = {}
-        self.scan_errors = []
-        self.error_count = 0
-        self.visited = 0
+        self.report: dict = {"status": "not_loaded", "mode": "registered", "errors": []}
+        self.lock = threading.RLock()
+        self.signature = None
 
     def excluded(self, path: Path):
         return any(
@@ -211,93 +204,119 @@ class Catalog:
             ]
         )
 
-    def refresh(self):
-        if not self.lock.acquire(blocking=False):
-            return {**self.report, "refresh_in_progress": True}
-        try:
-            if not self.pending:
-                self.pending = deque(Path(p) for p in self.settings.scan_roots)
-                self.seen, self.cycle_found = set(), {}
-                self.scan_errors, self.error_count, self.visited = [], 0, 0
-            self.report = {**self.report, "status": "scanning", "bounded": True}
-            start = time.monotonic()
-            batch_visited = 0
-            while self.pending and not self.stop_event.is_set():
-                if (
-                    batch_visited >= self.settings.max_scan_dirs
-                    or time.monotonic() - start > self.settings.scan_seconds
-                ):
+    @staticmethod
+    def file_signature(st):
+        return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns, st.st_mode)
+
+    def registered_roots(self, signature):
+        """Read one bounded local configuration file; never enumerate project directories."""
+        path = self.settings.projects_file
+        with open_beneath(path.parent, path.name) as fd:
+            before = os.fstat(fd)
+            if self.file_signature(before) != signature or before.st_size > 1_048_576:
+                raise ValueError("Project configuration changed or exceeds 1 MiB")
+            chunks, remaining = [], 1_048_577
+            while remaining:
+                chunk = os.read(fd, min(65536, remaining))
+                if not chunk:
                     break
-                p = self.pending.popleft()
-                if str(p) in self.seen or self.excluded(p):
-                    continue
-                self.seen.add(str(p))
-                batch_visited += 1
-                self.visited += 1
+                chunks.append(chunk)
+                remaining -= len(chunk)
+            if not remaining or self.file_signature(os.fstat(fd)) != signature:
+                raise ValueError("Project configuration changed or exceeds 1 MiB")
+
+        def unique_keys(pairs):
+            result = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError("Duplicate configuration key")
+                result[key] = value
+            return result
+
+        config = json.loads(b"".join(chunks).decode("utf-8-sig"), object_pairs_hook=unique_keys)
+        if not isinstance(config, dict) or set(config) != {"projects"}:
+            raise ValueError('Expected {"projects": ["/exact/project/root"]}')
+        roots = config["projects"]
+        if not isinstance(roots, list) or len(roots) > 1000:
+            raise ValueError("Register at most 1000 project paths")
+        if any(not isinstance(p, str) or not p.strip() or len(p) > 4096 or "\0" in p for p in roots):
+            raise ValueError("Project paths must be nonempty strings without NUL")
+        normalized = []
+        for root in roots:
+            expanded = Path(root).expanduser()
+            # Lexical normalization preserves symlinks for open_beneath to reject.
+            absolute = os.path.abspath(expanded if expanded.is_absolute() else path.parent / expanded)
+            if absolute not in normalized:
+                normalized.append(absolute)
+        return normalized
+
+    def refresh(self, force=False):
+        """Reload registrations on file change; force only rechecks these exact roots."""
+        with self.lock:
+            try:
+                signature = self.file_signature(self.settings.projects_file.lstat())
+            except FileNotFoundError:
+                signature = "missing"
+            except OSError:
+                signature = "unreadable"
+            if signature == self.signature and not force:
+                return self.report
+            self.signature = signature
+            projects, errors = {}, []
+            count, status = 0, "ready"
+            if signature in ("missing", "unreadable"):
+                status = "config_missing" if signature == "missing" else "config_error"
+            else:
                 try:
-                    # A descriptor anchors traversal and refuses a directory replaced by a symlink.
-                    with (
-                        open_beneath(p, directory=True) as fd,
-                        os.scandir(p if os.name == "nt" else fd) as iterator,
-                    ):
-                        entries = list(iterator)
-                        names = {entry.name for entry in entries}
-                        if ".oppen-project-steward" in names or "project.md" in names:
-                            project = identify(p)
-                            if project:
-                                self.cycle_found[project.id] = project
-                                self.projects = {**self.projects, project.id: project}
-                        children = []
-                        for entry in entries:
-                            if entry.name in SKIP_DIRS or entry.name == ".oppen-project-steward":
-                                continue
-                            if str(p) == "/Volumes" and entry.name == "Macintosh HD":
-                                continue
-                            if (
-                                entry.is_dir(follow_symlinks=False)
-                                and not getattr(entry.stat(follow_symlinks=False), "st_file_attributes", 0)
-                                & 0x400  # Windows reparse points, including junctions.
-                                and not self.excluded(p / entry.name)
-                            ):
-                                children.append(p / entry.name)
-                        self.pending.extend(sorted(children))
-                except (AccessDenied, OSError):
-                    self.error_count += 1
-                    if len(self.scan_errors) < 100:
-                        self.scan_errors.append({"path": str(p), "error": "missing_or_unreadable"})
-            bounded = bool(self.pending)
-            # Keep the previous catalog during a scan; remove stale entries at the completed cycle.
-            self.projects = {**self.projects, **self.cycle_found} if bounded else dict(self.cycle_found)
-            self.updated = time.time()
+                    roots = self.registered_roots(signature)
+                    count = len(roots)
+                    for root in roots:
+                        path = Path(root)
+                        project = None if self.excluded(path) else identify(path)
+                        if project:
+                            projects[project.id] = project
+                        else:
+                            errors.append({"path": root, "error": "unavailable_unmanaged_or_excluded"})
+                    if self.file_signature(self.settings.projects_file.lstat()) != signature:
+                        raise ValueError("Project configuration changed during reload")
+                    if errors:
+                        status = "partial"
+                except (OSError, ValueError, RuntimeError):
+                    # A missing/broken config never preserves an old authorization list.
+                    projects, errors, status = {}, [], "config_error"
+            self.projects = projects
             self.report = {
-                "status": "partial" if bounded or self.error_count else "complete",
-                "bounded": bounded,
-                "pending_directories": len(self.pending),
-                "errors": list(self.scan_errors),
-                "error_count": self.error_count,
-                "directories_scanned": self.visited,
-                "projects_found": len(self.projects),
-                "scanned_at": self.updated,
-                "seconds": round(time.monotonic() - start, 2),
-                "note": "Marker discovery only; no governance validation. Bounded scans resume next batch.",
+                "mode": "registered",
+                "status": status,
+                "registered_paths": count,
+                "projects_found": len(projects),
+                "error_count": len(errors),
+                "errors": errors,
+                "loaded_at": time.time(),
+                "note": (
+                    "Only exact roots in the local projects file are exposed; no recursive discovery. "
+                    "Edit that file to add/remove projects. Missing or invalid configuration denies access. "
+                    "Unavailable registered roots can be retried with refresh_projects."
+                ),
             }
             return self.report
-        finally:
-            self.lock.release()
 
     def project(self, project_id: str):
+        self.refresh()
         project = self.projects.get(project_id)
         if project is None:
-            raise AccessDenied("Unknown project ID; call list_projects first")
+            raise AccessDenied(
+                "Project not registered or unavailable; check the local projects file and call list_projects"
+            )
         current = identify(Path(project.root))
         if current != project or self.excluded(Path(project.root)):
             raise AccessDenied(
-                "Project moved, marker changed, or root was replaced; refresh project discovery"
+                "Project moved, marker changed, or root was replaced; reload the registered projects"
             )
         return project
 
     def public_report(self):
-        # Scanner diagnostics can contain unrelated local data directory names.
+        # Do not disclose unavailable/excluded registration paths to remote clients.
         return {k: v for k, v in self.report.items() if k != "errors"}
 
     def governance_paths(self, project: Project) -> set[str]:
@@ -445,6 +464,7 @@ class Catalog:
     def search(self, query: str, project_id: str | None = None, glob="*", limit=30):
         if not query.strip() or len(query) > 500 or not 1 <= limit <= 100:
             raise ValueError("Provide a query of 1-500 characters and limit 1-100")
+        self.refresh()
         projects = [self.project(project_id)] if project_id else list(self.projects.values())
         results = []
         scanned = skipped = 0

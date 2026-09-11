@@ -1,5 +1,6 @@
 import base64
 import hashlib
+import json
 import re
 from urllib.parse import parse_qs, urlsplit
 
@@ -12,6 +13,12 @@ from oppenproject.config import Settings
 from oppenproject.server import create_app
 
 CALLBACK = "https://chatgpt.com/connector_platform_oauth_redirect"
+
+
+def register_paths(settings, *paths, replace=False):
+    file = settings.projects_file
+    roots = [] if replace or not file.exists() else json.loads(file.read_text(encoding="utf-8"))["projects"]
+    file.write_text(json.dumps({"projects": roots + [str(p) for p in paths]}), encoding="utf-8")
 
 
 @pytest.fixture
@@ -33,10 +40,10 @@ def settings(tmp_path):
     (project / "notes.md").write_text("private-project-content\n", encoding="utf-8")
     settings = Settings(
         public_url="https://project.example.test",
-        scan_roots=[str(root)],
+        projects_file=tmp_path / "projects.local.json",
         state_dir=tmp_path / "state",
-        scan_interval=3600,
     )
+    register_paths(settings, project)
     configure_owner(settings)
     return settings
 

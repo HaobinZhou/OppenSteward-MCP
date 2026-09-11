@@ -26,10 +26,11 @@ async def test_real_stdio_process_governance_boundary_and_no_oauth(tmp_path, dis
         target.write_text("PRIVATE_CONTENT_NEVER_EXPOSE", encoding="utf-8")
     config = tmp_path / "config.local.json"
     (tmp_path / ".env").write_text(
-        'OPPEN_TRANSPORT=stdio\nOPPEN_SCAN_ROOTS=["./projects"]\nOPPEN_STATE_DIR=.runtime\n'
+        "OPPEN_TRANSPORT=stdio\nOPPEN_PROJECTS_FILE=projects.local.json\nOPPEN_STATE_DIR=.runtime\n"
         + f"OPPEN_DISCUSSION_MODE={discussion_mode}\n",
         encoding="utf-8",
     )
+    (tmp_path / "projects.local.json").write_text(json.dumps({"projects": [str(project)]}), encoding="utf-8")
     env = {k: v for k, v in os.environ.items() if not k.startswith("OPPEN_")}
     env["PYTHONUTF8"] = "1"
     server = StdioServerParameters(
@@ -104,6 +105,14 @@ async def test_real_stdio_process_governance_boundary_and_no_oauth(tmp_path, dis
                 )
                 assert not edited.isError
                 assert (project / doc["path"]).read_text(encoding="utf-8") == "补充后的草稿"
+            # The same child process immediately observes membership changes without restarting.
+            registrations = tmp_path / "projects.local.json"
+            registrations.write_text('{"projects": []}', encoding="utf-8")
+            denied = await session.call_tool("read_file", {"project_id": pid, "path": "project.md"})
+            assert denied.isError
+            assert (await session.call_tool("list_projects")).structuredContent["projects"] == []
+            registrations.write_text(json.dumps({"projects": [str(project)]}), encoding="utf-8")
+            assert (await session.call_tool("list_projects")).structuredContent["projects"][0]["id"] == pid
     if discussion_mode == "off":
         assert not (tmp_path / ".runtime").exists()
     assert not (tmp_path / ".runtime/oauth.sqlite3").exists()

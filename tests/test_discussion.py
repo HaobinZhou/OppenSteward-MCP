@@ -16,7 +16,7 @@ from oppenproject.catalog import AccessDenied, Catalog
 from oppenproject.discussion import Directory, Discussions
 from oppenproject.server import create_app, create_mcp
 
-from .conftest import CALLBACK, begin, consent_form, rpc, token
+from .conftest import CALLBACK, begin, consent_form, register_paths, rpc, token
 
 
 @pytest.fixture
@@ -57,7 +57,7 @@ def test_create_edit_and_index_without_governance_changes(discussion, skill):
     if skill == "r":
         (root / project.registry).unlink()
         (root / "project.md").write_text("<!-- stepwise-r-project:v3 -->\n", encoding="utf-8")
-        store.catalog.refresh()
+        store.catalog.refresh(force=True)
     before = {str(p.relative_to(root)): p.read_bytes() for p in root.rglob("*") if p.is_file()}
     assert store.list(pid)["documents"] == []
     first = create(store, pid)
@@ -125,7 +125,7 @@ from pathlib import Path
 from oppenproject.catalog import Catalog
 from oppenproject.config import Settings
 from oppenproject.discussion import Discussions
-catalog = Catalog(Settings(transport='stdio', scan_roots=[sys.argv[1]],
+catalog = Catalog(Settings(transport='stdio', projects_file=Path(sys.argv[1]),
                           state_dir=Path(sys.argv[2]), discussion_mode='write'))
 catalog.refresh()
 result = Discussions(catalog).write(sys.argv[3], topic='并发讨论', content='text',
@@ -139,7 +139,7 @@ print(json.dumps(result))
                 sys.executable,
                 "-c",
                 program,
-                store.settings.scan_roots[0],
+                str(store.settings.projects_file),
                 str(store.settings.state_dir),
                 pid,
                 f"multi-process-{n:04d}",
@@ -265,7 +265,7 @@ def test_exclusions_modes_legacy_and_size(discussion):
         )
     (root / ".oppen-project-steward/registry.md").unlink()
     (root / "project.md").write_text("<!-- stepwise-r-project:v2 -->\n", encoding="utf-8")
-    store.catalog.refresh()
+    store.catalog.refresh(force=True)
     with pytest.raises(AccessDenied, match="v3"):
         create(store, pid)
 
@@ -430,10 +430,11 @@ def test_overview_local_mode_and_legacy_gate_permissions(settings, mode, legacy)
     settings.discussion_mode = mode
     app = create_app(settings)
     if legacy:
-        root = Path(settings.scan_roots[0]) / "旧版项目"
+        root = (settings.projects_file.parent / "projects") / "旧版项目"
         # The existing fixture remains a v3 project; add a separate legacy marker.
         root.mkdir(exist_ok=True)
         (root / "project.md").write_text("<!-- stepwise-r-project:v2 -->\n", encoding="utf-8")
+        register_paths(settings, root)
     app.state.catalog.refresh()
     projects = app.state.catalog.projects.values()
     pid = next(p.id for p in projects if (p.version != "v3") == legacy)

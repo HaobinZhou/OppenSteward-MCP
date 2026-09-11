@@ -20,6 +20,7 @@ import uvicorn
 
 from oppenproject.server import create_app
 
+from .conftest import register_paths
 from .smoke_live import main as protocol_smoke
 
 
@@ -43,12 +44,13 @@ def test_native_browser_consent_and_callback(settings, tmp_path, discussion_mode
     callback_thread.start()
     callback = f"http://127.0.0.1:{callback_server.server_port}/callback"
     # Add an ordinary temporary project so the registered protocol verifier can also read a file.
-    sample = Path(settings.scan_roots[0]) / "OppenSteward-MCP"
+    sample = (settings.projects_file.parent / "projects") / "OppenSteward-MCP"
     (sample / ".oppen-project-steward").mkdir(parents=True)
     (sample / ".oppen-project-steward/registry.md").write_text(
         "<!-- oppen-project-steward:v3 -->\n# OppenSteward-MCP\n", encoding="utf-8"
     )
     (sample / "README.md").write_text("# OppenSteward-MCP temporary verification project\n", encoding="utf-8")
+    register_paths(settings, sample)
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]

@@ -2,7 +2,6 @@
 
 import os
 import subprocess
-from pathlib import Path
 
 import pytest
 
@@ -12,7 +11,7 @@ pytestmark = pytest.mark.skipif(os.name != "nt", reason="Requires native Windows
 
 
 def test_junction_is_not_discovered_or_read(settings, tmp_path):
-    root = Path(settings.scan_roots[0])
+    root = settings.projects_file.parent / "projects"
     project = next(root.iterdir())
     original = project / ".oppen-project-steward/Memory/entries"
     (original / "M-0001.md").unlink()
@@ -35,7 +34,7 @@ def test_junction_is_not_discovered_or_read(settings, tmp_path):
 
 
 def test_ancestor_and_file_cannot_be_replaced_during_read(settings):
-    project = next(Path(settings.scan_roots[0]).iterdir())
+    project = next((settings.projects_file.parent / "projects").iterdir())
     with open_beneath(project, ".oppen-project-steward/registry.md") as fd:
         assert os.read(fd, 1024)
         with pytest.raises(OSError):

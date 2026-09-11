@@ -2,7 +2,8 @@
 
 The authoritative exposure and authentication rules are the registered
 [README contracts](README.md#gpt-能看到哪些文件). This server is intended for
-one local owner. Governance document bodies can contain sensitive information;
+one local owner. Only exact project roots in the local registration file are
+accessible; a missing or invalid file disables project access. Governance document bodies can contain sensitive information;
 the file allowlist does not redact their contents. The optional Discussion tools
 also expose their text bodies. Writing is limited to Discussion documents and
 their index, requires separate authorization, and never executes document text.
@@ -14,7 +15,7 @@ without posting exploit details, private documents or credentials. There is no
 guaranteed response-time commitment.
 
 Use synthetic fixtures for a report. Include the affected commit, OS, transport
-and the smallest reproduction. Do not attach `.env`, `config.local.json`,
+and the smallest reproduction. Do not attach `.env`, `config.local.json`, `projects.local.json`,
 `.runtime`, tunnel profiles with secrets, or live OAuth messages. If a deployed
 credential is exposed, revoke it locally and rotate the appropriate credential
 through its owner (this server's OAuth or OpenAI's Tunnel runtime key).

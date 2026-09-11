@@ -319,8 +319,8 @@ button{{padding:12px 20px;margin-top:20px;border:0;border-radius:8px;cursor:poin
 button[value=allow]{{background:#164e63;color:white}}.error{{color:#b42318}}</style></head>
 <body><main><small>{APP_NAME} · 项目治理</small><h1>{action}</h1>
 <p>客户端：<strong>{esc(data["client_name"])}</strong></p>
-<p>授权后，ChatGPT 可发现受管理项目，只能读取治理索引、Memory 和 Attention 的索引及已登记条目。
-此范围也适用于之后自动发现的项目。权限：<code>{esc(" ".join(scopes))}</code>。</p>
+<p>授权后，ChatGPT 只能访问你在本机配置中登记的项目，读取治理索引、Memory 和 Attention 的索引及已登记条目。
+之后手动登记的项目也适用此权限；删除登记即可停止该项目的访问。权限：<code>{esc(" ".join(scopes))}</code>。</p>
 <p>数据、源码、Results、Deliverables、Audit、README 和其他 Canonical 正文不开放。
 治理文档中的链接不会授予目标文件的访问权限。旧版 R v2 项目只开放 project.md。</p>
 <p>治理文档本身的正文会提供给 ChatGPT，治理索引、Memory 和 Attention 保持只读。</p>
