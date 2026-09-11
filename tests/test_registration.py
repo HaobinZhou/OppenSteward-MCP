@@ -96,14 +96,7 @@ def test_missing_oversize_and_unreadable_config_revoke_access(settings):
     assert catalog.refresh()["status"] == "config_error"
     register_paths(settings, old.root, replace=True)
     assert catalog.refresh()["projects_found"] == 1
-    original = Path.lstat
-
-    def denied(path, *args, **kwargs):
-        if path == settings.projects_file:
-            raise PermissionError("fixture")
-        return original(path, *args, **kwargs)
-
-    with patch.object(Path, "lstat", denied):
+    with patch.object(catalog, "configuration_signature", side_effect=PermissionError("fixture")):
         assert catalog.refresh()["status"] == "config_error" and not catalog.projects
 
 

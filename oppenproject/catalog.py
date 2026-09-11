@@ -206,7 +206,20 @@ class Catalog:
 
     @staticmethod
     def file_signature(st):
-        return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns, st.st_mode)
+        return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns, st.st_mode, st.st_nlink)
+
+    def configuration_signature(self):
+        if os.name == "nt":
+            from .windows_fs import _open
+
+            # Use handle metadata consistently with the actual read on Windows.
+            # This opens only the config for metadata and rejects links/reparse points.
+            fd = _open(self.settings.projects_file, directory=False)
+            try:
+                return self.file_signature(os.fstat(fd))
+            finally:
+                os.close(fd)
+        return self.file_signature(self.settings.projects_file.lstat())
 
     def registered_roots(self, signature):
         """Read one bounded local configuration file; never enumerate project directories."""
@@ -254,7 +267,7 @@ class Catalog:
         """Reload registrations on file change; force only rechecks these exact roots."""
         with self.lock:
             try:
-                signature = self.file_signature(self.settings.projects_file.lstat())
+                signature = self.configuration_signature()
             except FileNotFoundError:
                 signature = "missing"
             except OSError:
@@ -277,7 +290,7 @@ class Catalog:
                             projects[project.id] = project
                         else:
                             errors.append({"path": root, "error": "unavailable_unmanaged_or_excluded"})
-                    if self.file_signature(self.settings.projects_file.lstat()) != signature:
+                    if self.configuration_signature() != signature:
                         raise ValueError("Project configuration changed during reload")
                     if errors:
                         status = "partial"
