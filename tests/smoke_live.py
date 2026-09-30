@@ -117,6 +117,12 @@ async def main(base_url, settings=None):
                         expected_tools = {"off": 8, "read": 10, "write": 12}[settings.discussion_mode]
                         expected_tools += {"off": 0, "read": 2, "write": 4}[settings.freeze_mode]
                         assert len(tool_list.tools) == expected_tools
+                        if settings.freeze_mode == "write":
+                            by_name = {tool.name: tool for tool in tool_list.tools}
+                            for name in ("freeze_add_questions", "freeze_change_question"):
+                                actor = by_name[name].inputSchema["properties"]["actor"]
+                                assert actor["enum"] == ["chatgpt", "codex"]
+                                assert actor["default"] == "chatgpt"
                         assert details["discussion_access"]["granted_scopes"] == [SCOPE]
                         assert not details["discussion_access"]["can_write"]
                         if settings.discussion_mode != "off":

@@ -219,6 +219,8 @@ Stepwise R 技能的 `scripts/freeze_workbench.py` 会按需启动一个临时�
 
 `Freeze/manifest.json` 记录轮次与问题 ID；`Freeze/questions/F-000001.json` 等文件保存各题的答复和讨论；HTML 实例位于 `Freeze/examples/`。这些文件是协作草稿，不会自动成为科学口径。正式冻结仍需更新 Stepwise Canonical 文档、实现与验证。
 
+Freeze 写工具通过 `actor` 记录发言来源：ChatGPT 使用 `"chatgpt"`（默认），Codex 调用 MCP 时必须显式传入 `"codex"`；本地技能命令自动记录 Codex。Web UI 在问题提出者、当前意见、逐条讨论和实例编辑者处展示不同颜色的来源标签，交接摘要也保留这些名字。来源是调用者声明的元数据，OAuth 验证的是读写授权；`actor` 不能扩大权限或冒充用户答复。旧 `web_ai` 记录保留历史网页 AI 标签，未记录的作者显示为未知，不批量猜测或改写旧记录。
+
 ## 保存和继续讨论
 
 想把网页里的讨论留给下次使用，或让本机 Codex 接着阅读，可以在 `.env` 中加入：

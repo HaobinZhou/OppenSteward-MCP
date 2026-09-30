@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 
 import pytest
+from mcp.server.fastmcp.exceptions import ToolError
 from starlette.testclient import TestClient
 
 from oppenproject.auth import FREEZE_READ, FREEZE_WRITE, SCOPE
@@ -58,13 +59,32 @@ async def test_stdio_freeze_tools_share_project_files_and_preserve_human_answer(
     })
     store = Freezes(catalog)
     q = store.read(pid, "F-000001")
-    assert q["status"] == "open" and q["created_by"] == "web_ai"
+    assert q["status"] == "open" and q["created_by"] == "chatgpt"
+    assert q["ai_position_by"] == "chatgpt"
     await mcp.call_tool("freeze_change_question", {
         "project_id": pid, "question_id": q["id"], "operation": "comment",
         "value": "网页 AI 建议核对日期来源。", "expected_revision": q["revision"],
         "request_id": "mcp-freeze-comment-1",
     })
-    assert store.read(pid, q["id"])["messages"][-1]["actor"] == "web_ai"
+    assert store.read(pid, q["id"])["messages"][-1]["actor"] == "chatgpt"
+    current = store.read(pid, q["id"])
+    await mcp.call_tool("freeze_change_question", {
+        "project_id": pid, "question_id": q["id"], "operation": "ai_position",
+        "value": "Codex 已核对日期实现。", "expected_revision": current["revision"],
+        "request_id": "mcp-codex-opinion", "actor": "codex",
+    })
+    assert store.read(pid, q["id"])["ai_position_by"] == "codex"
+    await mcp.call_tool("freeze_add_questions", {
+        "project_id": pid, "questions": items, "request_id": "mcp-codex-round", "actor": "codex"
+    })
+    assert store.read(pid, "F-000002")["created_by"] == "codex"
+    with pytest.raises(ToolError):
+        await mcp.call_tool("freeze_change_question", {
+            "project_id": pid, "question_id": q["id"], "operation": "comment", "value": "冒充用户",
+            "expected_revision": 3, "request_id": "mcp-human-actor", "actor": "user",
+        })
+    with pytest.raises(AccessDenied, match="actor must"):
+        store.add(pid, items, "invalid-actor", actor="user")
     with pytest.raises(AccessDenied):
         store.change(pid, q["id"], "answer", "竞争事件", 2, "mcp-answer-forbidden")
     assert (Path(catalog.projects[pid].root) / "project.md").read_text() == "<!-- stepwise-r-project:v3 -->\n"

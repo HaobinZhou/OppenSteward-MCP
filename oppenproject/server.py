@@ -8,7 +8,7 @@ import time
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import quote, urlsplit
 
 from mcp.server.auth.handlers.authorize import AuthorizationHandler
@@ -539,31 +539,38 @@ def create_mcp(settings: Settings, catalog: Catalog, provider=None):
             readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False
         ))
         async def freeze_add_questions(
-            project_id: str, questions: list[dict[str, Any]], request_id: str
+            project_id: str, questions: list[dict[str, Any]], request_id: str,
+            actor: Literal["chatgpt", "codex"] = "chatgpt"
         ) -> dict[str, Any]:
             """Add one complete batch of currently identifiable questions as the next round.
 
             Read the snapshot first. Provide a stable request_id for retries. Each question needs
             group, title, why, source_summary, ai_position and optional suggestions. New questions
             are drafts; this tool cannot freeze Canonical definitions or answer for the human.
+            Set actor to your client: ChatGPT uses chatgpt; Codex must explicitly use codex.
+            This records the author's declared source, not an authenticated client identity.
             """
-            return await run_in_threadpool(freezes.add, project_id, questions, request_id)
+            return await run_in_threadpool(freezes.add, project_id, questions, request_id, actor)
 
         @mcp.tool(annotations=ToolAnnotations(
             readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False
         ))
         async def freeze_change_question(
             project_id: str, question_id: str, operation: str, value: Any,
-            expected_revision: int, request_id: str
+            expected_revision: int, request_id: str,
+            actor: Literal["chatgpt", "codex"] = "chatgpt"
         ) -> dict[str, Any]:
             """Append AI discussion, revise the AI opinion, or attach a sandboxed HTML example.
 
             operation is comment, ai_position, example or reopen. Read the question first and pass its
             revision. A conflict requires rereading. Human answers and formal freeze state cannot
             be edited here. Reuse request_id only when retrying identical arguments.
+            Set actor to your client: ChatGPT uses chatgpt; Codex must explicitly use codex.
+            This records the author's declared source, not an authenticated client identity.
             """
             return await run_in_threadpool(
-                freezes.change, project_id, question_id, operation, value, expected_revision, request_id
+                freezes.change, project_id, question_id, operation, value,
+                expected_revision, request_id, actor
             )
 
     return mcp

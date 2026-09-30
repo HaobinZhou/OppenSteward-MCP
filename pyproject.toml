@@ -1,6 +1,6 @@
 [project]
 name = "oppen-steward-mcp"
-version = "0.5.0"
+version = "0.5.1"
 description = "Project governance and writable discussions, with OAuth HTTP and Secure MCP Tunnel"
 readme = "README.md"
 license = "MIT"

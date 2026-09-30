@@ -21,7 +21,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: HaobinZhou/academic-skills
-          ref: d15d7b4c6c915cca63b41500631f31452901c526
+          ref: 56e7f515e333e2eb3880e3259eeb681e8d8783ad
           path: .runtime/academic-skills
       - uses: actions/setup-python@v5
         with:

@@ -49,12 +49,20 @@ class Freezes:
     def read(self, project_id: str, question_id: str, include_example: bool = False):
         return self.store(project_id).read_question(question_id, include_example)
 
-    def add(self, project_id: str, questions: list[dict], request_id: str):
-        return self.store(project_id).add_questions(questions, request_id=request_id, actor="web_ai")
+    @staticmethod
+    def actor(value: str):
+        if value not in {"chatgpt", "codex"}:
+            raise AccessDenied("MCP actor must be chatgpt or codex")
+        return value
+
+    def add(self, project_id: str, questions: list[dict], request_id: str, actor: str = "chatgpt"):
+        actor = self.actor(actor)
+        return self.store(project_id).add_questions(questions, request_id=request_id, actor=actor)
 
     def change(self, project_id: str, question_id: str, operation: str, value: object,
-               expected_revision: int, request_id: str):
+               expected_revision: int, request_id: str, actor: str = "chatgpt"):
+        actor = self.actor(actor)
         if operation not in {"comment", "ai_position", "example", "reopen"}:
             raise AccessDenied("MCP may only discuss, revise an AI opinion or example, or reopen a question")
         return self.store(project_id).change(question_id, operation, value,
-            expected_revision=expected_revision, request_id=request_id, actor="web_ai")
+            expected_revision=expected_revision, request_id=request_id, actor=actor)
