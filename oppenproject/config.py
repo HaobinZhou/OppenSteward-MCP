@@ -26,9 +26,11 @@ ENV_FIELDS = {
     "TUNNEL_PROFILE": "tunnel_profile",
     "TUNNEL_CLIENT": "tunnel_client",
     "DISCUSSION_MODE": "discussion_mode",
+    "FREEZE_MODE": "freeze_mode",
+    "FREEZE_PROJECTS": "freeze_projects",
 }
 INTEGER_FIELDS = {"port"}
-LIST_FIELDS = {"exclude_roots", "extra_redirect_uris"}
+LIST_FIELDS = {"exclude_roots", "extra_redirect_uris", "freeze_projects"}
 LEGACY_SCAN_FIELDS = {"scan_roots", "scan_interval", "scan_seconds", "max_scan_dirs"}
 
 
@@ -53,12 +55,16 @@ class Settings:
     tunnel_profile: str = "oppen-steward"
     tunnel_client: str = "tunnel-client"
     discussion_mode: str = "off"
+    freeze_mode: str = "off"
+    freeze_projects: list[str] = field(default_factory=list)
 
     def __post_init__(self):
         if self.transport not in {"http", "stdio"}:
             raise ValueError("OPPEN_TRANSPORT must be http or stdio")
         if self.discussion_mode not in {"off", "read", "write"}:
             raise ValueError("OPPEN_DISCUSSION_MODE must be off, read or write")
+        if self.freeze_mode not in {"off", "read", "write"}:
+            raise ValueError("OPPEN_FREEZE_MODE must be off, read or write")
         self.public_url = self.public_url.rstrip("/")
         u = urlsplit(self.public_url)
         local = u.scheme == "http" and u.hostname in {"localhost", "127.0.0.1", "::1"}
@@ -85,6 +91,11 @@ class Settings:
             ):
                 raise ValueError(f"{name} must be a JSON array of nonempty strings")
         self.exclude_roots = [str(Path(p).expanduser().resolve()) for p in self.exclude_roots]
+        # Keep exact lexical paths: the catalog also rejects symlinked roots.
+        self.freeze_projects = [str(Path(os.path.abspath(Path(p).expanduser())))
+                                for p in self.freeze_projects]
+        if len(set(self.freeze_projects)) != len(self.freeze_projects):
+            raise ValueError("freeze_projects contains duplicate roots")
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", self.tunnel_profile):
             raise ValueError("Invalid tunnel profile name")
 
@@ -111,6 +122,9 @@ class Settings:
     @property
     def secure_cookie(self):
         return self.public_url.startswith("https://")
+
+    def freeze_allowed(self, root: str | Path) -> bool:
+        return self.freeze_mode != "off" and str(root) in self.freeze_projects
 
     @classmethod
     def load(cls, path: Path = ROOT / "config.local.json"):
@@ -146,7 +160,7 @@ class Settings:
                 values[name] = str(p if p.is_absolute() else path.parent / p)
             else:
                 values[name] = None
-        for name in ("exclude_roots",):
+        for name in ("exclude_roots", "freeze_projects"):
             if name in values and isinstance(values[name], list):
                 values[name] = [
                     str(Path(p).expanduser() if Path(p).expanduser().is_absolute() else path.parent / p)

@@ -7,6 +7,7 @@ import logging
 import time
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlsplit
 
@@ -32,6 +33,8 @@ from .auth import (
     CONTENT_SECURITY_POLICY,
     DISCUSSION_READ,
     DISCUSSION_WRITE,
+    FREEZE_READ,
+    FREEZE_WRITE,
     SCOPE,
     OAuthProvider,
     supported_scopes,
@@ -39,6 +42,7 @@ from .auth import (
 from .catalog import AccessDenied, Catalog
 from .config import APP_NAME, Settings
 from .discussion import Discussions, directory_for
+from .freeze import Freezes
 
 http_log = logging.getLogger("oppenproject.http")
 
@@ -110,7 +114,7 @@ class EndpointMiddleware:
 class GovernanceMCP(FastMCP):
     async def granted_scopes(self):
         if not self.settings.auth:
-            return {SCOPE, DISCUSSION_READ, DISCUSSION_WRITE}
+            return {SCOPE, DISCUSSION_READ, DISCUSSION_WRITE, FREEZE_READ, FREEZE_WRITE}
         token = get_access_token()
         verified = await self._token_verifier.verify_token(token.token) if token else None
         return set(verified.scopes) if verified else set()
@@ -121,6 +125,10 @@ class GovernanceMCP(FastMCP):
             return [SCOPE, DISCUSSION_READ, DISCUSSION_WRITE]
         if name in {"list_discussions", "read_discussion"}:
             return [SCOPE, DISCUSSION_READ]
+        if name in {"freeze_add_questions", "freeze_change_question"}:
+            return [SCOPE, FREEZE_READ, FREEZE_WRITE]
+        if name in {"freeze_snapshot", "freeze_read_question"}:
+            return [SCOPE, FREEZE_READ]
         return [SCOPE]
 
     async def list_tools(self):
@@ -148,9 +156,9 @@ class GovernanceMCP(FastMCP):
                         TextContent(
                             type="text",
                             text=(
-                                "This connection lacks the requested Discussion permissions. Refresh the "
-                                "ChatGPT app's tools and authorize Discussion access. If consent still only "
-                                "offers governance read access, remove the old app and add the same MCP URL "
+                                "This connection lacks the requested permissions. Refresh the "
+                                "ChatGPT app's tools and authorize the additional access. If consent still "
+                                "shows an older permission set, remove the old app and add the same MCP URL "
                                 "again. Reconnecting an old OAuth client alone may retain its old scopes."
                             ),
                         )
@@ -276,6 +284,9 @@ def create_mcp(settings: Settings, catalog: Catalog, provider=None):
             "use list_discussions/read_discussion/create_discussion/edit_discussion for MCP-owned Discussion "
             "documents only. No delete, rename, general file writing, shell or automatic execution. "
             "Saving a discussion does not implement it or modify governance records. "
+            "When separately enabled, Freeze tools read structured Stepwise R v3 draft questions and "
+            "let an authorized AI add questions, discussion, opinions, examples or reopen a draft. "
+            "They cannot edit human answers or Canonical scientific definitions. "
             "discussion_mode is local configuration, not the caller's permission. Check discussion_access "
             "in project_overview. If its mcp_tools lists tools missing from your client, refresh the app's "
             "tools and start a new conversation; do not fall back to generic file tools."
@@ -301,6 +312,7 @@ def create_mcp(settings: Settings, catalog: Catalog, provider=None):
         readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False
     )
     discussions = Discussions(catalog)
+    freezes = Freezes(catalog)
 
     @mcp.tool(annotations=readonly)
     def list_projects(query: str = "", offset: int = 0, limit: int = 100) -> dict[str, Any]:
@@ -328,12 +340,18 @@ def create_mcp(settings: Settings, catalog: Catalog, provider=None):
 
     @mcp.tool(annotations=readonly)
     async def project_overview(project_id: str) -> dict[str, Any]:
-        """Read the registry, locate indices and report this connection's Discussion permissions.
+        """Read the registry, locate indices and report Discussion and Freeze permissions.
 
         discussion_mode describes local configuration; discussion_access describes authorization.
         mcp_tools is the live server list, which may differ from an older client's cached tool list.
         """
         project = catalog.project(project_id)
+        freeze_enabled = (
+            project.skill == "stepwise-r-project"
+            and project.version == "v3"
+            and settings.freeze_allowed(project.root)
+            and not catalog.excluded(Path(project.root) / "Freeze")
+        )
         prefix = ".oppen-project-steward/" if project.registry.startswith(".oppen-project-steward/") else ""
         allowed = catalog.governance_paths(project)
         mode = settings.discussion_mode if project.version == "v3" else "off"
@@ -370,6 +388,12 @@ def create_mcp(settings: Settings, catalog: Catalog, provider=None):
                 "granted_scopes": sorted(granted) if provider else None,
                 "missing_scopes": missing,
                 "guidance": guidance,
+            },
+            "freeze_access": {
+                "available": freeze_enabled,
+                "can_read": freeze_enabled and set(mcp.tool_scopes("freeze_snapshot")) <= granted,
+                "can_write": freeze_enabled and settings.freeze_mode == "write"
+                and set(mcp.tool_scopes("freeze_add_questions")) <= granted,
             },
             "mcp_tools": [tool.name for tool in await mcp.list_tools()],
         }
@@ -490,6 +514,56 @@ def create_mcp(settings: Settings, catalog: Catalog, provider=None):
                 description=description,
                 expected_revision=expected_revision,
                 request_id=request_id,
+            )
+
+    if settings.freeze_mode != "off":
+
+        @mcp.tool(annotations=readonly)
+        async def freeze_snapshot(project_id: str) -> dict[str, Any]:
+            """Read all currently recognized Stepwise freeze questions, answers and discussion.
+
+            These are collaboration drafts, not Canonical frozen scientific definitions.
+            """
+            return await run_in_threadpool(freezes.snapshot, project_id)
+
+        @mcp.tool(annotations=readonly)
+        async def freeze_read_question(
+            project_id: str, question_id: str, include_example: bool = False
+        ) -> dict[str, Any]:
+            """Read one freeze question and optionally its sandbox-only HTML example."""
+            return await run_in_threadpool(freezes.read, project_id, question_id, include_example)
+
+    if settings.freeze_mode == "write":
+
+        @mcp.tool(annotations=ToolAnnotations(
+            readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False
+        ))
+        async def freeze_add_questions(
+            project_id: str, questions: list[dict[str, Any]], request_id: str
+        ) -> dict[str, Any]:
+            """Add one complete batch of currently identifiable questions as the next round.
+
+            Read the snapshot first. Provide a stable request_id for retries. Each question needs
+            group, title, why, source_summary, ai_position and optional suggestions. New questions
+            are drafts; this tool cannot freeze Canonical definitions or answer for the human.
+            """
+            return await run_in_threadpool(freezes.add, project_id, questions, request_id)
+
+        @mcp.tool(annotations=ToolAnnotations(
+            readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False
+        ))
+        async def freeze_change_question(
+            project_id: str, question_id: str, operation: str, value: Any,
+            expected_revision: int, request_id: str
+        ) -> dict[str, Any]:
+            """Append AI discussion, revise the AI opinion, or attach a sandboxed HTML example.
+
+            operation is comment, ai_position, example or reopen. Read the question first and pass its
+            revision. A conflict requires rereading. Human answers and formal freeze state cannot
+            be edited here. Reuse request_id only when retrying identical arguments.
+            """
+            return await run_in_threadpool(
+                freezes.change, project_id, question_id, operation, value, expected_revision, request_id
             )
 
     return mcp

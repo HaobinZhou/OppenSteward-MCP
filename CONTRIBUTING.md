@@ -33,6 +33,12 @@ with Python 3.12 and 3.13. Actual ChatGPT HTTP connection and day-to-day use hav
 only been verified on macOS; Windows/Linux account connections and a real Secure
 MCP Tunnel connection still need testing.
 
+Freeze adapter tests use the companion `stepwise-r-project` skill. CI checks out
+an exact `academic-skills` commit and sets `STEPWISE_R_TEST_SKILL_ROOT` to that
+checkout. Local tests can use the same variable, a sibling skill checkout, or an
+installed Codex skill. An explicitly configured missing helper fails the test;
+without a companion installation, the adapter integration tests skip.
+
 ## Optional browser regression
 
 Install Node.js and Playwright outside this repository or into an ignored local

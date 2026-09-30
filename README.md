@@ -129,6 +129,8 @@ OPPEN_EXCLUDE_ROOTS=["~/Projects/MyApp/private"]
 | `OPPEN_PROJECTS_FILE` | 项目登记文件的位置；默认 `projects.local.json`，其中的列表支持热更新 |
 | `OPPEN_EXCLUDE_ROOTS` | 排除不想分享的文件夹及其子文件夹 |
 | `OPPEN_DISCUSSION_MODE` | 默认 `off`；`read` 开放讨论读取，`write` 同时允许新建和编辑讨论 |
+| `OPPEN_FREEZE_MODE` | 默认 `off`；`read` 开放 Stepwise R v3 冻结口径草稿读取，`write` 允许 AI 追加问题、意见和 HTML 实例 |
+| `OPPEN_FREEZE_PROJECTS` | 精确允许使用 Freeze 工具的项目根目录 JSON 数组；默认 `[]`，即使已设置 `OPPEN_FREEZE_MODE=write` 也不会开放任何项目 |
 | `OPPEN_PUBLIC_URL` | HTTP 模式下填写自己的 HTTPS 域名 |
 | `OPPEN_PORT` | 默认 `8766`；端口被占用时可以更换，并同步修改转发规则 |
 | `OPPEN_TUNNEL_ID` | 填入 OpenAI Platform 中的 Tunnel ID |
@@ -204,8 +206,18 @@ Memory、Attention 的索引分别为 `index.md`，条目路径为 `entries/M-XX
 | `get_skill_guide` | 查看两个技能的本机 SKILL.md |
 | `list_discussions` / `read_discussion` | 查找和读取讨论，包括编辑所需的版本标识 |
 | `create_discussion` / `edit_discussion` | 新建或编辑讨论，由 MCP 更新索引；仅在 `write` 模式下提供 |
+| `freeze_snapshot` / `freeze_read_question` | 读取已登记 Stepwise R v3 项目的结构化冻结口径草稿；需 `OPPEN_FREEZE_MODE=read` 或 `write` |
+| `freeze_add_questions` / `freeze_change_question` | 批量追加新问题，或写入 AI 讨论、意见、HTML 实例；仅在 `OPPEN_FREEZE_MODE=write` 下提供，不能修改用户答复或正式 Canonical |
 
 </details>
+
+## Stepwise R 冻结口径工作台
+
+Stepwise R 技能的 `scripts/freeze_workbench.py` 会按需启动一个临时网页服务，返回登录链接和本机端口。项目记录保存在该项目的 `Freeze/` 目录；关闭网页服务后记录保留。默认只监听 `127.0.0.1`，同机上的反向代理可以转发到返回的 `forward_target`。若需要从局域网直接连接，可显式使用 `--host 0.0.0.0`。默认使用随机登录密钥；用户明确要求直接分享页面时，可使用 `--no-auth`，此时所有能访问该地址的人均可读取和修改 Freeze 草稿。通过公网转发时，可用 `--public-origin https://你的域名` 生成远程链接。
+
+网页端 ChatGPT 访问同一批记录使用本 MCP 服务，**不连接工作台的临时端口**。先在 `projects.local.json` 登记具体 Stepwise R v3 项目，并配置 `OPPEN_FREEZE_MODE=write`、`OPPEN_FREEZE_PROJECTS=["/该项目的绝对根目录"]` 和 `OPPEN_SKILL_ROOT`（指向包含新版 Stepwise R 技能的目录），重启 MCP 服务，再刷新 ChatGPT 中的工具和权限。只有同时登记且列入 Freeze 允许列表的项目可以使用这些工具。`project_overview.freeze_access` 可检查当前连接的读写授权。已有 `Discussion` 权限与 Freeze 权限相互独立。MCP 只开放 Freeze 的专用工具；通用 `read_file` 等入口仍不读取科研数据或 Canonical 正文。
+
+`Freeze/manifest.json` 记录轮次与问题 ID；`Freeze/questions/F-000001.json` 等文件保存各题的答复和讨论；HTML 实例位于 `Freeze/examples/`。这些文件是协作草稿，不会自动成为科学口径。正式冻结仍需更新 Stepwise Canonical 文档、实现与验证。
 
 ## 保存和继续讨论
 

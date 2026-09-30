@@ -31,6 +31,8 @@ from .config import APP_NAME, Settings
 SCOPE = "governance:read"
 DISCUSSION_READ = "discussion:read"
 DISCUSSION_WRITE = "discussion:write"
+FREEZE_READ = "freeze:read"
+FREEZE_WRITE = "freeze:write"
 
 
 def supported_scopes(settings):
@@ -38,6 +40,8 @@ def supported_scopes(settings):
         [SCOPE]
         + ([DISCUSSION_READ] if settings.discussion_mode != "off" else [])
         + ([DISCUSSION_WRITE] if settings.discussion_mode == "write" else [])
+        + ([FREEZE_READ] if settings.freeze_mode != "off" else [])
+        + ([FREEZE_WRITE] if settings.freeze_mode == "write" else [])
     )
 
 
@@ -48,6 +52,7 @@ def valid_scopes(scopes, settings):
         and SCOPE in selected
         and selected <= set(supported_scopes(settings))
         and (DISCUSSION_WRITE not in selected or DISCUSSION_READ in selected)
+        and (FREEZE_WRITE not in selected or FREEZE_READ in selected)
     )
 
 
@@ -309,6 +314,18 @@ class OAuthProvider:
                 "不允许删除、重命名、修改其他文件或执行代码。保存讨论不会自动执行其中的建议。</p>"
             )
             action = "授权读取治理文件并新建、编辑讨论"
+        if FREEZE_READ in scopes:
+            discussion += (
+                "<p>同时允许读取已登记 Stepwise R v3 项目 Freeze/ 中的问题、答复、讨论与实例。"
+                "这些协作草稿会提供给 ChatGPT，但不代表正式冻结的科学口径。</p>"
+            )
+            action = "授权读取项目冻结口径草稿"
+        if FREEZE_WRITE in scopes:
+            discussion += (
+                "<p><strong>允许为 Freeze/ 追加问题和 AI 讨论，修订 AI 意见及 HTML 实例。</strong>"
+                "不能代替用户回答，也不能修改 Canonical 或宣告正式冻结。</p>"
+            )
+            action = "授权参与冻结口径讨论"
         return f'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>授权 {APP_NAME}</title>
 <style>body{{font:16px system-ui;background:#f3f4f6;color:#17212d;margin:0;padding:8vh 20px}}
@@ -321,7 +338,8 @@ button[value=allow]{{background:#164e63;color:white}}.error{{color:#b42318}}</st
 <p>客户端：<strong>{esc(data["client_name"])}</strong></p>
 <p>授权后，ChatGPT 只能访问你在本机配置中登记的项目，读取治理索引、Memory 和 Attention 的索引及已登记条目。
 之后手动登记的项目也适用此权限；删除登记即可停止该项目的访问。权限：<code>{esc(" ".join(scopes))}</code>。</p>
-<p>数据、源码、Results、Deliverables、Audit、README 和其他 Canonical 正文不开放。
+<p>数据、源码、Results、Deliverables、Audit、README 和 Canonical 正文不开放；
+按上方单独授权的 Freeze 草稿与 Discussion 除外。
 治理文档中的链接不会授予目标文件的访问权限。旧版 R v2 项目只开放 project.md。</p>
 <p>治理文档本身的正文会提供给 ChatGPT，治理索引、Memory 和 Attention 保持只读。</p>
 {discussion}

@@ -15,8 +15,14 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       PYTHONUTF8: '1'
+      STEPWISE_R_TEST_SKILL_ROOT: ${{ github.workspace }}/.runtime/academic-skills
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: HaobinZhou/academic-skills
+          ref: d15d7b4c6c915cca63b41500631f31452901c526
+          path: .runtime/academic-skills
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}

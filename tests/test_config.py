@@ -32,7 +32,8 @@ def test_env_precedence_paths_and_no_shell_interpolation(tmp_path, monkeypatch):
     config.write_text('{"port": 8880}', encoding="utf-8")
     (tmp_path / ".env").write_text(
         "OPPEN_PORT=8881\nOPPEN_TRANSPORT=stdio\nOPPEN_PROJECTS_FILE=./项目列表.json\n"
-        'OPPEN_EXCLUDE_ROOTS=["./项目/private"]\nOPPEN_STATE_DIR=state\nOPPEN_SKILL_ROOT=skills\n'
+        'OPPEN_EXCLUDE_ROOTS=["./项目/private"]\nOPPEN_FREEZE_PROJECTS=["./项目"]\n'
+        'OPPEN_STATE_DIR=state\nOPPEN_SKILL_ROOT=skills\n'
         "CONTROL_PLANE_API_KEY='fixture-${HOME}-$(echo literal)'\n",
         encoding="utf-8",
     )
@@ -41,6 +42,7 @@ def test_env_precedence_paths_and_no_shell_interpolation(tmp_path, monkeypatch):
     assert result.port == 8882 and result.transport == "stdio"
     assert result.projects_file == tmp_path / "项目列表.json"
     assert result.exclude_roots == [str(tmp_path / "项目/private")]
+    assert result.freeze_projects == [str(tmp_path / "项目")]
     assert result.state_dir == tmp_path / "state" and result.skill_root == tmp_path / "skills"
     assert runtime_environment(tmp_path)["CONTROL_PLANE_API_KEY"] == "fixture-${HOME}-$(echo literal)"
     assert "fixture-" not in json.dumps(asdict(result), default=str)
